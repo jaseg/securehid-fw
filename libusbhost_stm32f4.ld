@@ -18,13 +18,16 @@
  * along with this library.  If not, see <http://www.gnu.org/licenses/>.
  */
 
-/* Linker script for ST STM32F4DISCOVERY (STM32F407VG, 1024K flash, 128K RAM). */
+/* Minimal linker script for chinese STM32F4 board (STM32F407VE, 512K flash, 128K RAM). */
 
 /* Define memory regions. */
 MEMORY
 {
-	rom (rx) : ORIGIN = 0x08000000, LENGTH = 1024K
-	ram (rwx) : ORIGIN = 0x20000000, LENGTH = 128K
+	rom (rx) : ORIGIN = 0x08000000, LENGTH = 512K
+	ram (rwx) : ORIGIN = 0x20000000, LENGTH = 112K /* Main SRAM */
+	sram2 (rwx) : ORIGIN = 0x2001c000, LENGTH = 16K /* SRAM2 with some security features (?) */
+	ccm (rwx) : ORIGIN = 0x10000000, LENGTH = 64K /* Fast core-coupled memory */
+	backup (rwx) : ORIGIN = 0x40024000, LENGTH = 4K /* Battery-backed backup SRAM */
 }
 
 /* Include the common ld script. */

@@ -25,8 +25,6 @@
 #include "usbh_lld_stm32f4.h"		/// provides low level usb host driver for stm32f4 platform
 #include "usbh_driver_hid.h"		/// provides generic usb device driver for Human Interface Device (HID)
 #include "usbh_driver_hub.h"		/// provides usb full speed hub driver (Low speed devices on hub are not supported)
-#include "usbh_driver_gp_xbox.h"	/// provides usb device driver for Gamepad: Microsoft XBOX compatible Controller
-#include "usbh_driver_ac_midi.h"	/// provides usb device driver for midi class devices
 
  // STM32f407 compatible
 #include <libopencm3/stm32/rcc.h>
@@ -54,13 +52,13 @@ static void clock_setup(void)
 	rcc_clock_setup_hse_3v3(&hse_8mhz_3v3[CLOCK_3V3_168MHZ]);
 
 	// GPIO
-	rcc_periph_clock_enable(RCC_GPIOA); // OTG_FS + button
+	rcc_periph_clock_enable(RCC_GPIOA); // USART + OTG_FS + button
 	rcc_periph_clock_enable(RCC_GPIOB); // OTG_HS
-	rcc_periph_clock_enable(RCC_GPIOC); // USART + OTG_FS charge pump
+	rcc_periph_clock_enable(RCC_GPIOC); // OTG_FS charge pump
 	rcc_periph_clock_enable(RCC_GPIOD); // LEDS
 
 	// periphery
-	rcc_periph_clock_enable(RCC_USART6); // USART
+	rcc_periph_clock_enable(RCC_USART1); // USART
 	rcc_periph_clock_enable(RCC_OTGFS); // OTG_FS
 	rcc_periph_clock_enable(RCC_OTGHS); // OTG_HS
 	rcc_periph_clock_enable(RCC_TIM6); // TIM6
@@ -106,9 +104,9 @@ static void gpio_setup(void)
 	gpio_mode_setup(GPIOB, GPIO_MODE_AF, GPIO_PUPD_NONE, GPIO15 | GPIO14);
 	gpio_set_af(GPIOB, GPIO_AF12, GPIO14 | GPIO15);
 
-	// USART TX
-	gpio_mode_setup(GPIOC, GPIO_MODE_AF, GPIO_PUPD_NONE, GPIO6 | GPIO7);
-	gpio_set_af(GPIOC, GPIO_AF8, GPIO6 | GPIO7);
+	// USART
+	gpio_mode_setup(GPIOA, GPIO_MODE_AF, GPIO_PUPD_NONE, GPIO9 | GPIO10);
+	gpio_set_af(GPIOA, GPIO_AF7, GPIO9 | GPIO10);
 
 	// button
 	gpio_mode_setup(GPIOA, GPIO_MODE_INPUT, GPIO_PUPD_NONE, GPIO0);
@@ -117,8 +115,6 @@ static void gpio_setup(void)
 static const usbh_dev_driver_t *device_drivers[] = {
 	&usbh_hub_driver,
 	&usbh_hid_driver,
-	&usbh_gp_xbox_driver,
-	&usbh_midi_driver,
 	NULL
 };
 
@@ -133,32 +129,6 @@ static const usbh_low_level_driver_t * const lld_drivers[] = {
 	NULL
 	};
 
-static void gp_xbox_update(uint8_t device_id, gp_xbox_packet_t packet)
-{
-	(void)device_id;
-	(void)packet;
-	LOG_PRINTF("update %d: %d %d \n", device_id, packet.axis_left_x, packet.buttons & GP_XBOX_BUTTON_A);
-}
-
-
-static void gp_xbox_connected(uint8_t device_id)
-{
-	(void)device_id;
-	LOG_PRINTF("connected %d", device_id);
-}
-
-static void gp_xbox_disconnected(uint8_t device_id)
-{
-	(void)device_id;
-	LOG_PRINTF("disconnected %d", device_id);
-}
-
-static const gp_xbox_config_t gp_xbox_config = {
-	.update = &gp_xbox_update,
-	.notify_connected = &gp_xbox_connected,
-	.notify_disconnected = &gp_xbox_disconnected
-};
-
 static void hid_in_message_handler(uint8_t device_id, const uint8_t *data, uint32_t length)
 {
 	(void)device_id;
@@ -171,6 +141,7 @@ static void hid_in_message_handler(uint8_t device_id, const uint8_t *data, uint3
 	// print only first 4 bytes, since every mouse should have at least these four set.
 	// Report descriptors are not read by driver for now, so we do not know what each byte means
 	LOG_PRINTF("HID EVENT %02X %02X %02X %02X \n", data[0], data[1], data[2], data[3]);
+    /*
 	if (hid_get_type(device_id) == HID_TYPE_KEYBOARD) {
 		static int x = 0;
 		if (x != data[2]) {
@@ -178,31 +149,11 @@ static void hid_in_message_handler(uint8_t device_id, const uint8_t *data, uint3
 			hid_set_report(device_id, x);
 		}
 	}
+    */
 }
 
 static const hid_config_t hid_config = {
 	.hid_in_message_handler = &hid_in_message_handler
-};
-
-static void midi_in_message_handler(int device_id, uint8_t *data)
-{
-	(void)device_id;
-	switch (data[1]>>4) {
-	case 8:
-		LOG_PRINTF("\r\nNote Off");
-		break;
-
-	case 9:
-		LOG_PRINTF("\r\nNote On");
-		break;
-
-	default:
-		break;
-	}
-}
-
-const midi_config_t midi_config = {
-	.read_callback = &midi_in_message_handler
 };
 
 int main(void)
@@ -214,7 +165,8 @@ int main(void)
 	tim6_setup();
 
 #ifdef USART_DEBUG
-	usart_init(USART6, 921600);
+    //USART_BRR(USART1) = rcc_apb2_frequency / (16 * 1000000);
+	usart_init(USART1, 1000000);
 #endif
 	LOG_PRINTF("\n\n\n\n\n###################\nInit\n");
 
@@ -225,8 +177,6 @@ int main(void)
 	 */
 	hid_driver_init(&hid_config);
 	hub_driver_init();
-	gp_xbox_driver_init(&gp_xbox_config);
-	midi_driver_init(&midi_config);
 
 	gpio_set(GPIOD,  GPIO13);
 	/**
