@@ -15,7 +15,10 @@ project (libusbhost C)
 
 set (USE_STM32F4_FS TRUE CACHE BOOL "Use USB full speed (FS) host periphery")
 set (USE_STM32F4_HS TRUE CACHE BOOL "Use USB high speed (HS) host periphery")
-set (USE_USART_DEBUG TRUE CACHE BOOL "Use debug uart output")
+set (USE_USART_DEBUG TRUE CACHE BOOL "Enable human-readable serial debug output")
+set (DEBUG_USART USART1 CACHE STRING "USART to use for debug output")
+set (DEBUG_USART_DMA DMA2 CACHE STRING "DMA controller to use for debug usart")
+set (DEBUG_USART_DMA_STREAM_NUM 7 CACHE STRING "DMA stream number to use for debug usart. This must be the stream mapped to the [DEBUG_USART]_TX channel")
 
 # Set compiler and linker flags
 

@@ -29,24 +29,17 @@
 
 BEGIN_DECLS
 
-struct usart_commands{
-	const char * cmd;
-	void (*callback)(const char * arg);
-};
-
-
 #ifdef USART_DEBUG
 void usart_init(uint32_t usart, uint32_t baudrate);
 void usart_printf(const char *str, ...);
 void usart_fifo_send(void);
-
-void usart_call_cmd(struct usart_commands * commands);
 void usart_interrupt(void);
+
+void debug_usart_init() {
+
 #define LOG_PRINTF(format, ...) usart_printf(format, ##__VA_ARGS__);
-#define LOG_FLUSH() usart_fifo_send()
 #else
 #define LOG_PRINTF(dummy, ...) ((void)dummy)
-#define LOG_FLUSH()
 #endif
 
 END_DECLS

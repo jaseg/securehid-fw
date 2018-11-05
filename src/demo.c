@@ -38,38 +38,30 @@
 #include <string.h>
 #include <stdlib.h>
 
+#define UNUSED(var) ((void)var)
 
-static inline void delay_ms_busy_loop(uint32_t ms)
-{
-	volatile uint32_t i;
-	for (i = 0; i < 14903*ms; i++);
+static inline void delay_ms_busy_loop(uint32_t ms) {
+	for (volatile uint32_t i = 0; i < 14903*ms; i++);
 }
 
 
 /* Set STM32 to 168 MHz. */
-static void clock_setup(void)
-{
+static void clock_setup(void) {
 	rcc_clock_setup_hse_3v3(&hse_8mhz_3v3[CLOCK_3V3_168MHZ]);
 
-	// GPIO
-	rcc_periph_clock_enable(RCC_GPIOA); // USART + OTG_FS + button
-	rcc_periph_clock_enable(RCC_GPIOB); // OTG_HS
-	rcc_periph_clock_enable(RCC_GPIOC); // OTG_FS charge pump
-	rcc_periph_clock_enable(RCC_GPIOD); // LEDS
+	rcc_periph_clock_enable(RCC_GPIOA);
+	rcc_periph_clock_enable(RCC_GPIOE);
 
-	// periphery
-	rcc_periph_clock_enable(RCC_USART1); // USART
-	rcc_periph_clock_enable(RCC_OTGFS); // OTG_FS
-	rcc_periph_clock_enable(RCC_OTGHS); // OTG_HS
-	rcc_periph_clock_enable(RCC_TIM6); // TIM6
+	rcc_periph_clock_enable(RCC_USART1);
+	rcc_periph_clock_enable(RCC_USART2);
+	rcc_periph_clock_enable(RCC_OTGFS);
+	rcc_periph_clock_enable(RCC_OTGHS);
+	rcc_periph_clock_enable(RCC_TIM6);
 }
 
 
-/*
- * setup 10kHz timer
- */
-static void tim6_setup(void)
-{
+/* setup 10kHz timer */
+static void tim6_setup(void) {
 	timer_reset(TIM6);
 	timer_set_prescaler(TIM6, 8400 - 1);	// 84Mhz/10kHz - 1
 	timer_set_period(TIM6, 65535);			// Overflow in ~6.5 seconds
@@ -88,28 +80,23 @@ static uint32_t tim6_get_time_us(void)
 
 static void gpio_setup(void)
 {
-	/* Set GPIO12-15 (in GPIO port D) to 'output push-pull'. */
-	gpio_mode_setup(GPIOD, GPIO_MODE_OUTPUT,
-			GPIO_PUPD_NONE, GPIO12 | GPIO13 | GPIO14 | GPIO15);
+    /* D2, D3 LEDs */
+	gpio_mode_setup(GPIOA, GPIO_MODE_OUTPUT, GPIO_PUPD_NONE, GPIO6 | GPIO7);
 
-	/* Set	 */
-	gpio_mode_setup(GPIOC, GPIO_MODE_OUTPUT, GPIO_PUPD_NONE, GPIO0);
-	gpio_clear(GPIOC, GPIO0);
-
-	// OTG_FS
+    /* USB OTG FS phy outputs */
 	gpio_mode_setup(GPIOA, GPIO_MODE_AF, GPIO_PUPD_NONE, GPIO11 | GPIO12);
 	gpio_set_af(GPIOA, GPIO_AF10, GPIO11 | GPIO12);
 
-	// OTG_HS
-	gpio_mode_setup(GPIOB, GPIO_MODE_AF, GPIO_PUPD_NONE, GPIO15 | GPIO14);
-	gpio_set_af(GPIOB, GPIO_AF12, GPIO14 | GPIO15);
-
-	// USART
+	/* USART1 (debug) */
 	gpio_mode_setup(GPIOA, GPIO_MODE_AF, GPIO_PUPD_NONE, GPIO9 | GPIO10);
 	gpio_set_af(GPIOA, GPIO_AF7, GPIO9 | GPIO10);
 
-	// button
-	gpio_mode_setup(GPIOA, GPIO_MODE_INPUT, GPIO_PUPD_NONE, GPIO0);
+    /* USART2 (host link) */
+	gpio_mode_setup(GPIOA, GPIO_MODE_AF, GPIO_PUPD_NONE, GPIO2 | GPIO3);
+	gpio_set_af(GPIOA, GPIO_AF7, GPIO2 | GPIO3);
+
+    /* K0 (PE4)/K1 (PE3) buttons */
+	gpio_mode_setup(GPIOE, GPIO_MODE_INPUT, GPIO_PUPD_PULLUP, GPIO3 | GPIO4);
 }
 
 static const usbh_dev_driver_t *device_drivers[] = {
@@ -119,20 +106,14 @@ static const usbh_dev_driver_t *device_drivers[] = {
 };
 
 static const usbh_low_level_driver_t * const lld_drivers[] = {
-#ifdef USE_STM32F4_USBH_DRIVER_FS
 	&usbh_lld_stm32f4_driver_fs, // Make sure USE_STM32F4_USBH_DRIVER_FS is defined in usbh_config.h
-#endif
-
-#ifdef USE_STM32F4_USBH_DRIVER_HS
-	&usbh_lld_stm32f4_driver_hs, // Make sure USE_STM32F4_USBH_DRIVER_HS is defined in usbh_config.h
-#endif
 	NULL
-	};
+};
 
 static void hid_in_message_handler(uint8_t device_id, const uint8_t *data, uint32_t length)
 {
-	(void)device_id;
-	(void)data;
+	UNUSED(device_id);
+	UNUSED(data);
 	if (length < 4) {
 		LOG_PRINTF("data too short, type=%d\n", hid_get_type(device_id));
 		return;
@@ -143,11 +124,6 @@ static void hid_in_message_handler(uint8_t device_id, const uint8_t *data, uint3
 	LOG_PRINTF("HID EVENT %02X %02X %02X %02X \n", data[0], data[1], data[2], data[3]);
     /*
 	if (hid_get_type(device_id) == HID_TYPE_KEYBOARD) {
-		static int x = 0;
-		if (x != data[2]) {
-			x = data[2];
-			hid_set_report(device_id, x);
-		}
 	}
     */
 }
@@ -161,24 +137,17 @@ int main(void)
 	clock_setup();
 	gpio_setup();
 
-	// provides time_curr_us to usbh_poll function
+	/* provides time_curr_us to usbh_poll function */
 	tim6_setup();
 
-#ifdef USART_DEBUG
-    //USART_BRR(USART1) = rcc_apb2_frequency / (16 * 1000000);
-	usart_init(USART1, 1000000);
-#endif
-	LOG_PRINTF("\n\n\n\n\n###################\nInit\n");
+	usart_init(USART2, 1000000);
+    debug_usart_init();
 
-	/**
-	 * device driver initialization
-	 *
-	 * Pass configuration struct where the callbacks are defined
-	 */
+	LOG_PRINTF("SecureHID device side initializing");
+
 	hid_driver_init(&hid_config);
 	hub_driver_init();
 
-	gpio_set(GPIOD,  GPIO13);
 	/**
 	 * Pass array of supported low level drivers
 	 * In case of stm32f407, there are up to two supported OTG hosts on one chip.
@@ -187,28 +156,12 @@ int main(void)
 	 * Pass array of supported device drivers
 	 */
 	usbh_init(lld_drivers, device_drivers);
-	gpio_clear(GPIOD,  GPIO13);
 
 	LOG_PRINTF("USB init complete\n");
 
-	LOG_FLUSH();
-
-	while (1) {
-		// set busy led
-		gpio_set(GPIOD,  GPIO14);
-
-		uint32_t time_curr_us = tim6_get_time_us();
-
-		usbh_poll(time_curr_us);
-
-		// clear busy led
-		gpio_clear(GPIOD,  GPIO14);
-
-		LOG_FLUSH();
-
-		// approx 1ms interval between usbh_poll()
-		delay_ms_busy_loop(1);
+	while (23) {
+		usbh_poll(tim6_get_time_us());
+		delay_ms_busy_loop(1); /* approx 1ms interval between usbh_poll() */
 	}
-
 	return 0;
 }

@@ -32,6 +32,8 @@
 #include <stdio.h>
 #include <libopencm3/stm32/usart.h>
 
+uint32_t debug_usart = 0;
+
 #define USART_FIFO_OUT_SIZE (4096)
 uint8_t usart_fifo_out_data[USART_FIFO_OUT_SIZE];
 uint32_t usart_fifo_out_len = 0;
@@ -128,118 +130,46 @@ void usart_init(uint32_t arg_usart, uint32_t baudrate)
 	usart_set_mode(arg_usart, USART_MODE_TX | USART_MODE_RX);
 	usart_set_parity(arg_usart, USART_PARITY_NONE);
 	usart_set_stopbits(arg_usart, USART_STOPBITS_1);
-
-	usart_enable_rx_interrupt(arg_usart);
 	usart_enable(arg_usart);
-	usart = arg_usart;
 }
 
-void usart_interrupt(void)
-{
-	if (usart_get_interrupt_source(usart, USART_SR_RXNE)) {
-		uint8_t data = usart_recv(usart);
-		usart_fifo_in_push(data);
-		if ( data != 3 && data != '\r' && data != '\n') {
-			usart_fifo_push(data);
-		} else {
-			LOG_PRINTF("\n>>");
-		}
-	}
+#define WRITE_BUF_LEN 256
+struct tx_buf {
+    buf[WRITE_BUF_LEN];
+    int pos;
+} tx_buf[2];
+int tx_buf_active;
+
+#define DEBUG_USART_DMA_STREAM (DMA_STREAM##DEBUG_USART_DMA_STREAM_NUM)
+#define DEBUG_USART_NVIC_DMA_IRQ (NVIC_##DEBUG_USART_DMA##_##DEBUG_USART_DMA_STREAM##_IRQ)
+#define DEBUG_USART_DMA_ISR (DEBUG_USART_DMA##_##DEBUG_USART_DMA_STREAM##_IRQHandler)
+void debug_usart_init() {
+    tx_buf[0].pos = tx_buf[1].pos = 0;
+    tx_buf_active = 1;
+
+    usart_init(DEBUG_USART, DEBUG_BAUDRATE);
+
+    dma_stream_reset(DEBUG_USART_DMA, DEBUG_USART_DMA_STREAM);
+	dma_set_peripheral_address(DEBUG_USART_DMA, DEBUG_USART_DMA_STREAM, (uint32_t)&DEBUG_USART##_DR);
+	dma_set_memory_address(DEBUG_USART_DMA, DEBUG_USART_DMA_STREAM, (uint32_t)tx_buf[1].buf);
+	dma_set_number_of_data(DEBUG_USART_DMA, DEBUG_USART_DMA_STREAM, size);
+	dma_set_read_from_memory(DEBUG_USART_DMA, DEBUG_USART_DMA_STREAM);
+	dma_enable_memory_increment_mode(DEBUG_USART_DMA, DEBUG_USART_DMA_STREAM);
+	dma_set_peripheral_size(DEBUG_USART_DMA, DEBUG_USART_DMA_STREAM, DMA_CCR_PSIZE_8BIT);
+	dma_set_memory_size(DEBUG_USART_DMA, DEBUG_USART_DMA_STREAM, DMA_CCR_MSIZE_8BIT);
+	dma_set_priority(DEBUG_USART_DMA, DEBUG_USART_DMA_STREAM, DMA_CCR_PL_VERY_HIGH);
+	dma_enable_transfer_complete_interrupt(DEBUG_USART_DMA, DEBUG_USART_DMA_STREAM);
+	dma_enable_channel(DEBUG_USART_DMA, DEBUG_USART_DMA_STREAM);
+    usart_enable_tx_dma(DEBUG_USART);
+    nvic_enable_irq(DEBUG_USART_NVIC_DMA_IRQ);
 }
 
-void usart_fifo_send(void)
-{
-	while(usart_fifo_out_len) {
-		uint8_t data = usart_fifo_pop();
-		usart_wait_send_ready(usart);
-		usart_send(usart, data);
-	}
+void DEBUG_USART_DMA_ISR
+
+void usart_fifo_push(uint8_t c) {
+    struct tx_buf *buf = &tx_buf[!tx_buf_active]; /* select inactive buffer */
+    buf->buf[buf->pos++] = c;
+    nvic_disable_irq(DEBUG_USART_NVIC_DMA_IRQ);
+    if 
 }
-static char command[128];
-static uint8_t command_len = 0;
-static uint8_t command_argindex = 0;
 
-static uint8_t usart_read_command(void)
-{
-	uint32_t fifo_len = usart_fifo_in_len;
-	while (fifo_len) {
-		uint8_t data = usart_fifo_in_pop();
-
-		if ((data >= 'A') && (data <= 'Z')) {
-			data += 'a'-'A';
-		}
-
-		if (((data >= 'a') && (data <= 'z')) || ((data >='0') && (data<='9'))) {
-			command[command_len++] = data;
-		} else if (data == ' ') {
-			if (command_len) {
-				if (command_argindex == 0) {
-					command[command_len++] = 0;
-					command_argindex = command_len;
-				} else {
-					command[command_len++] = ' ';
-				}
-			}
-		} else if (data == '\r' || data == '\n') {
-			if (command_len) {
-				command[command_len++] = 0;
-				if (!command_argindex) {
-					command_argindex = command_len;
-				}
-				return 1;
-			}
-		} else if (data == 127) {
-			if (command_len) {
-				if (command_argindex) {
-					if (command_len == command_argindex) {
-						command_argindex = 0;
-					}
-				}
-				command[command_len] = '\0';
-				command_len--;
-			}
-		} else if (data == 3) {
-			command_len = 0;
-			command_argindex = 0;
-		} else {
-			LOG_PRINTF("%d ",data);
-		}
-
-		fifo_len--;
-	}
-	return 0;
-}
-void usart_call_cmd(struct usart_commands * commands)
-{
-	uint32_t i = 0;
-	if(!usart_read_command()) {
-		return;
-	}
-	if (!command_len) {
-		LOG_PRINTF("#2");
-		return;
-	}
-
-	i=0;
-	while(commands[i].cmd != NULL) {
-		if (!strcmp((char*)command, (char*)commands[i].cmd)) {
-			if (commands[i].callback) {
-				if(command_argindex == command_len) {
-					commands[i].callback(NULL);
-				} else {
-					commands[i].callback(&command[command_argindex]);
-				}
-			}
-			LOG_PRINTF("\n>>");
-			command_len = 0;
-			command_argindex = 0;
-			return;
-		} else {
-
-		}
-		i++;
-	}
-	command_len = 0;
-	command_argindex = 0;
-	LOG_PRINTF("INVALID COMMAND\n>>");
-}
