@@ -38,8 +38,6 @@
 #include <string.h>
 #include <stdlib.h>
 
-#define UNUSED(var) ((void)var)
-
 static inline void delay_ms_busy_loop(uint32_t ms) {
 	for (volatile uint32_t i = 0; i < 14903*ms; i++);
 }
@@ -55,8 +53,8 @@ static void clock_setup(void) {
 	rcc_periph_clock_enable(RCC_USART1);
 	rcc_periph_clock_enable(RCC_USART2);
 	rcc_periph_clock_enable(RCC_OTGFS);
-	rcc_periph_clock_enable(RCC_OTGHS);
 	rcc_periph_clock_enable(RCC_TIM6);
+	rcc_periph_clock_enable(RCC_DMA2);
 }
 
 
@@ -159,9 +157,14 @@ int main(void)
 
 	LOG_PRINTF("USB init complete\n");
 
+    int i = 0, j = 0;
 	while (23) {
 		usbh_poll(tim6_get_time_us());
 		delay_ms_busy_loop(1); /* approx 1ms interval between usbh_poll() */
+        if (i++ == 200) {
+            i = 0;
+            LOG_PRINTF("Loop iteration %d\n", j++);
+        }
 	}
 	return 0;
 }

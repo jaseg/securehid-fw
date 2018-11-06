@@ -380,7 +380,9 @@ void tfp_format(void *putp, putcf putf, const char *fmt, va_list va)
                 lng = 2;
 # endif
 #endif
+            __attribute__((fallthrough));
             case 'x':
+            __attribute__((fallthrough));
             case 'X':
                 p.base = 16;
                 p.uc = (ch == 'X')?1:0;

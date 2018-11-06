@@ -32,15 +32,16 @@ BEGIN_DECLS
 #ifdef USART_DEBUG
 void usart_init(uint32_t usart, uint32_t baudrate);
 void usart_printf(const char *str, ...);
-void usart_fifo_send(void);
-void usart_interrupt(void);
+void usart_fifo_push(uint8_t c);
 
-void debug_usart_init() {
+void debug_usart_init(void);
 
 #define LOG_PRINTF(format, ...) usart_printf(format, ##__VA_ARGS__);
 #else
 #define LOG_PRINTF(dummy, ...) ((void)dummy)
 #endif
+
+#define UNUSED(var) ((void)var)
 
 END_DECLS
 

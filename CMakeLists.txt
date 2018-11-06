@@ -17,8 +17,10 @@ set (USE_STM32F4_FS TRUE CACHE BOOL "Use USB full speed (FS) host periphery")
 set (USE_STM32F4_HS TRUE CACHE BOOL "Use USB high speed (HS) host periphery")
 set (USE_USART_DEBUG TRUE CACHE BOOL "Enable human-readable serial debug output")
 set (DEBUG_USART USART1 CACHE STRING "USART to use for debug output")
-set (DEBUG_USART_DMA DMA2 CACHE STRING "DMA controller to use for debug usart")
+set (DEBUG_USART_BAUDRATE 1000000 CACHE STRING "Baud rate to use for debug USART")
+set (DEBUG_USART_DMA_NUM 2 CACHE STRING "DMA controller number to use for debug usart")
 set (DEBUG_USART_DMA_STREAM_NUM 7 CACHE STRING "DMA stream number to use for debug usart. This must be the stream mapped to the [DEBUG_USART]_TX channel")
+set (DEBUG_USART_DMA_CHANNEL_NUM 4 CACHE STRING "DMA channel number to use for debug usart. This must be the channel mapped to the [DEBUG_USART]_TX channel")
 
 # Set compiler and linker flags
 
@@ -89,6 +91,12 @@ if (USE_USART_DEBUG)
 	add_definitions (-DUSART_DEBUG)
 endif (USE_USART_DEBUG)
 message (STATUS "Setup done")
+
+add_definitions (-DDEBUG_USART=${DEBUG_USART})
+add_definitions (-DDEBUG_USART_BAUDRATE=${DEBUG_USART_BAUDRATE})
+add_definitions (-DDEBUG_USART_DMA_NUM=${DEBUG_USART_DMA_NUM})
+add_definitions (-DDEBUG_USART_DMA_STREAM_NUM=${DEBUG_USART_DMA_STREAM_NUM})
+add_definitions (-DDEBUG_USART_DMA_CHANNEL_NUM=${DEBUG_USART_DMA_CHANNEL_NUM})
 
 add_custom_target (README.md
 	SOURCES README.md
