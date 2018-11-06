@@ -1,12 +1,3 @@
-if (USE_USART_DEBUG)
-	set (USART_HELPERS
-		usart_helpers.c
-		tinyprintf.c
-	)
-else (USE_USART_DEBUG)
-	set (USART_HELPERS "")
-endif (USE_USART_DEBUG)
-
 set (inc ${CMAKE_SOURCE_DIR}/include)
 
 add_library (usbhost
@@ -28,6 +19,9 @@ add_library (usbhost
 	usbh_driver_hub.c
 	usbh_driver_hub_private.h
 	usbh_lld_stm32f4.c
+    usart_helpers.c
+    tinyprintf.c
+    cobs.c
 )
 
 target_link_libraries (usbhost

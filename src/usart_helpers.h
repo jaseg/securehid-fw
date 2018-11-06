@@ -39,10 +39,13 @@ struct dma_buf {
 };
 
 struct dma_usart_file {
+    uint32_t usart;
+    uint32_t baudrate;
     uint32_t dma;
     uint8_t stream;
+    uint8_t channel;
     uint8_t irqn;
-    struct dma_buf *buf;
+    volatile struct dma_buf *buf;
 };
 
 
@@ -53,11 +56,14 @@ void usart_init(uint32_t usart, uint32_t baudrate);
 void usart_fprintf(struct dma_usart_file *f, const char *str, ...);
 void usart_fifo_push(uint8_t c);
 
-void usart_dma_init(uint32_t usart, uint32_t baudrate, uint32_t dma, uint8_t stream, uint8_t channel);
-void usart_kickoff_dma(uint32_t dma, uint8_t stream, uint8_t *buf, size_t len);
+void usart_dma_init(struct dma_usart_file *f);
+void usart_kickoff_dma(uint32_t dma, uint8_t stream, volatile uint8_t *buf, size_t len);
 void schedule_dma(volatile struct dma_usart_file *f);
 int dma_fifo_push(volatile struct dma_buf *buf, char c);
-void putf(void *file, char c);
+int putf(void *file, char c);
+int putb(void *file, const uint8_t *buf, size_t len);
+void flush(void *file);
+void send_packet(struct dma_usart_file *f, const uint8_t *data, size_t len);
 
 /* This macro abomination templates a bunch of dma-specific register/constant names from preprocessor macros passed in
  * from cmake. */
@@ -71,10 +77,8 @@ void putf(void *file, char c);
 #define DMA_ISR(dma, stream) DMA_ISR_PASTE(dma, stream)
 
 #ifdef USART_DEBUG
-#define DEBUG_USART_INIT() usart_dma_init(DEBUG_USART, DEBUG_USART_BAUDRATE, DMA(DEBUG_USART_DMA_NUM), DEBUG_USART_DMA_STREAM_NUM, DEBUG_USART_DMA_CHANNEL_NUM)
 #define LOG_PRINTF(format, ...) usart_fprintf(debug_out, format, ##__VA_ARGS__);
 #else
-#define DEBUG_USART_INIT() ((void)0)
 #define LOG_PRINTF(dummy, ...) ((void)dummy)
 #endif
 

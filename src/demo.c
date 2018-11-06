@@ -58,6 +58,7 @@ static void clock_setup(void) {
 	rcc_periph_clock_enable(RCC_OTGFS);
 	rcc_periph_clock_enable(RCC_TIM6);
 	rcc_periph_clock_enable(RCC_DMA2);
+	rcc_periph_clock_enable(RCC_DMA1);
 }
 
 
@@ -83,6 +84,7 @@ static void gpio_setup(void)
 {
     /* D2, D3 LEDs */
 	gpio_mode_setup(GPIOA, GPIO_MODE_OUTPUT, GPIO_PUPD_NONE, GPIO6 | GPIO7);
+	gpio_set(GPIOA, GPIO6 | GPIO7);
 
     /* USB OTG FS phy outputs */
 	gpio_mode_setup(GPIOA, GPIO_MODE_AF, GPIO_PUPD_NONE, GPIO11 | GPIO12);
@@ -136,18 +138,14 @@ static const hid_config_t hid_config = {
 volatile struct {
     struct dma_buf dma;
     uint8_t data[256];
-} debug_buf = {
-    .dma = {
-        .xfr_start = -1,
-        .xfr_end = 0,
-        .wr_pos = 0,
-        .len = sizeof(debug_buf.data)
-    }
-};
+} debug_buf = { .dma = { .len = sizeof(debug_buf.data) } };
 
 struct dma_usart_file debug_out_s = {
+    .usart = DEBUG_USART,
+    .baudrate = DEBUG_USART_BAUDRATE,
     .dma = DMA(DEBUG_USART_DMA_NUM),
     .stream = DEBUG_USART_DMA_STREAM_NUM,
+    .channel = DEBUG_USART_DMA_CHANNEL_NUM,
     .irqn = NVIC_DMA_IRQ(DEBUG_USART_DMA_NUM, DEBUG_USART_DMA_STREAM_NUM),
     .buf = &debug_buf.dma
 };
@@ -160,6 +158,31 @@ void DMA_ISR(DEBUG_USART_DMA_NUM, DEBUG_USART_DMA_STREAM_NUM)(void) {
         schedule_dma(debug_out);
 }
 
+
+volatile struct {
+    struct dma_buf dma;
+    uint8_t data[128];
+} usart2_buf = { .dma = { .len = sizeof(usart2_buf.data) } };
+
+struct dma_usart_file usart2_out_s = {
+    .usart = USART2,
+    .baudrate = 1000000,
+    .dma = DMA1,
+    .stream = 6,
+    .channel = 4,
+    .irqn = NVIC_DMA_IRQ(1, 6),
+    .buf = &usart2_buf.dma
+};
+struct dma_usart_file *usart2_out = &usart2_out_s;
+
+void dma1_stream6_isr(void) {
+	dma_clear_interrupt_flags(usart2_out->dma, usart2_out->stream, DMA_TCIF);
+
+    if (usart2_out->buf->wr_pos != usart2_out->buf->xfr_end) /* buffer not empty */
+        schedule_dma(usart2_out);
+}
+
+
 int main(void)
 {
 	clock_setup();
@@ -168,10 +191,14 @@ int main(void)
 	/* provides time_curr_us to usbh_poll function */
 	tim6_setup();
 
-	usart_init(USART2, 1000000);
-    DEBUG_USART_INIT();
+#ifdef USART_DEBUG
+    usart_dma_init(debug_out);
+#endif
+    usart_dma_init(usart2_out);
 
-	LOG_PRINTF("SecureHID device side initializing");
+	LOG_PRINTF("\n==================================\n");
+	LOG_PRINTF("SecureHID device side initializing\n");
+	LOG_PRINTF("==================================\n");
 
 	hid_driver_init(&hid_config);
 	hub_driver_init();
@@ -191,11 +218,12 @@ int main(void)
 	while (23) {
 		usbh_poll(tim6_get_time_us());
 		delay_ms_busy_loop(1); /* approx 1ms interval between usbh_poll() */
-        //if (i++ == 200) {
+        if (i++ == 1000) {
             i = 0;
-            LOG_PRINTF("0123456789ABCDEF\n");
-            //LOG_PRINTF("%x %x %x %x\n", j++, debug_buf.dma.xfr_start, debug_buf.dma.xfr_end, debug_buf.dma.wr_pos);
-        //}
+            const char *s = "foobarfoobarfoobarfoobarfoobar";
+            send_packet(usart2_out, (uint8_t *)s, strlen(s));
+            LOG_PRINTF("Loop iteration %d\n", 1000*(j++));
+        }
 	}
 	return 0;
 }
