@@ -33,6 +33,9 @@
 #include <libopencm3/stm32/timer.h>
 #include <libopencm3/stm32/otg_hs.h>
 #include <libopencm3/stm32/otg_fs.h>
+#include <libopencm3/stm32/dma.h>
+#include <libopencm3/cm3/nvic.h>
+#include <libopencmsis/core_cm3.h>
 
 #include <stdint.h>
 #include <string.h>
@@ -130,6 +133,33 @@ static const hid_config_t hid_config = {
 	.hid_in_message_handler = &hid_in_message_handler
 };
 
+volatile struct {
+    struct dma_buf dma;
+    uint8_t data[256];
+} debug_buf = {
+    .dma = {
+        .xfr_start = -1,
+        .xfr_end = 0,
+        .wr_pos = 0,
+        .len = sizeof(debug_buf.data)
+    }
+};
+
+struct dma_usart_file debug_out_s = {
+    .dma = DMA(DEBUG_USART_DMA_NUM),
+    .stream = DEBUG_USART_DMA_STREAM_NUM,
+    .irqn = NVIC_DMA_IRQ(DEBUG_USART_DMA_NUM, DEBUG_USART_DMA_STREAM_NUM),
+    .buf = &debug_buf.dma
+};
+struct dma_usart_file *debug_out = &debug_out_s;
+
+void DMA_ISR(DEBUG_USART_DMA_NUM, DEBUG_USART_DMA_STREAM_NUM)(void) {
+	dma_clear_interrupt_flags(debug_out->dma, debug_out->stream, DMA_TCIF);
+
+    if (debug_out->buf->wr_pos != debug_out->buf->xfr_end) /* buffer not empty */
+        schedule_dma(debug_out);
+}
+
 int main(void)
 {
 	clock_setup();
@@ -139,7 +169,7 @@ int main(void)
 	tim6_setup();
 
 	usart_init(USART2, 1000000);
-    debug_usart_init();
+    DEBUG_USART_INIT();
 
 	LOG_PRINTF("SecureHID device side initializing");
 
@@ -161,10 +191,11 @@ int main(void)
 	while (23) {
 		usbh_poll(tim6_get_time_us());
 		delay_ms_busy_loop(1); /* approx 1ms interval between usbh_poll() */
-        if (i++ == 200) {
+        //if (i++ == 200) {
             i = 0;
-            LOG_PRINTF("Loop iteration %d\n", j++);
-        }
+            LOG_PRINTF("0123456789ABCDEF\n");
+            //LOG_PRINTF("%x %x %x %x\n", j++, debug_buf.dma.xfr_start, debug_buf.dma.xfr_end, debug_buf.dma.wr_pos);
+        //}
 	}
 	return 0;
 }

@@ -26,18 +26,55 @@
 #include "usbh_core.h"
 #include <stdint.h>
 #include <stdarg.h>
+#include <errno.h>
 
 BEGIN_DECLS
 
-#ifdef USART_DEBUG
+struct dma_buf {
+    uint32_t xfr_start; /* Start index of running DMA transfer */
+    uint32_t xfr_end; /* End index of running DMA transfer plus one */
+    uint32_t wr_pos; /* Next index to be written */
+    uint32_t len;
+    uint8_t data[0];
+};
+
+struct dma_usart_file {
+    uint32_t dma;
+    uint8_t stream;
+    uint8_t irqn;
+    struct dma_buf *buf;
+};
+
+
+extern struct dma_usart_file *debug_out;
+
+
 void usart_init(uint32_t usart, uint32_t baudrate);
-void usart_printf(const char *str, ...);
+void usart_fprintf(struct dma_usart_file *f, const char *str, ...);
 void usart_fifo_push(uint8_t c);
 
-void debug_usart_init(void);
+void usart_dma_init(uint32_t usart, uint32_t baudrate, uint32_t dma, uint8_t stream, uint8_t channel);
+void usart_kickoff_dma(uint32_t dma, uint8_t stream, uint8_t *buf, size_t len);
+void schedule_dma(volatile struct dma_usart_file *f);
+int dma_fifo_push(volatile struct dma_buf *buf, char c);
+void putf(void *file, char c);
 
-#define LOG_PRINTF(format, ...) usart_printf(format, ##__VA_ARGS__);
+/* This macro abomination templates a bunch of dma-specific register/constant names from preprocessor macros passed in
+ * from cmake. */
+#define DMA_PASTE(num) DMA ## num
+#define DMA(num) DMA_PASTE(num)
+
+#define NVIC_DMA_IRQ_PASTE(dma, stream) NVIC_ ## DMA ## dma ## _ ## STREAM ## stream ## _IRQ
+#define NVIC_DMA_IRQ(dma, stream) NVIC_DMA_IRQ_PASTE(dma, stream)
+
+#define DMA_ISR_PASTE(dma, stream) DMA ## dma ## _ ## STREAM ## stream ## _IRQHandler
+#define DMA_ISR(dma, stream) DMA_ISR_PASTE(dma, stream)
+
+#ifdef USART_DEBUG
+#define DEBUG_USART_INIT() usart_dma_init(DEBUG_USART, DEBUG_USART_BAUDRATE, DMA(DEBUG_USART_DMA_NUM), DEBUG_USART_DMA_STREAM_NUM, DEBUG_USART_DMA_CHANNEL_NUM)
+#define LOG_PRINTF(format, ...) usart_fprintf(debug_out, format, ##__VA_ARGS__);
 #else
+#define DEBUG_USART_INIT() ((void)0)
 #define LOG_PRINTF(dummy, ...) ((void)dummy)
 #endif
 
