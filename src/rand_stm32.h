@@ -4,6 +4,8 @@
 #include <stdint.h>
 #include <unistd.h>
 
+#define BLAKE2S_HASH_SIZE 32
+
 void rand_init(void);
 
 #endif

@@ -175,7 +175,7 @@ volatile struct {
 
 struct dma_usart_file usart2_out_s = {
     .usart = USART2,
-    .baudrate = 1000000,
+    .baudrate = 115200,
     .dma = DMA1,
     .stream = 6,
     .channel = 4,
@@ -298,6 +298,8 @@ int main(void)
     cobs_decode_incremental_initialize(&host_cobs_state);
     usart_enable_rx_interrupt(USART2);
     nvic_enable_irq(NVIC_USART2_IRQ);
+    nvic_set_priority(NVIC_USART2_IRQ, 3<<4);
+    nvic_set_priority(debug_out_s.irqn, 1<<4);
 
 	LOG_PRINTF("\n==================================\n");
 	LOG_PRINTF("SecureHID device side initializing\n");
@@ -329,14 +331,9 @@ int main(void)
     if (!handshake)
         LOG_PRINTF("Error starting protocol handshake.\n");
 
-    int i = 0, j = 0;
 	while (23) {
 		usbh_poll(tim6_get_time_us());
 		delay_ms_busy_loop(1); /* approx 1ms interval between usbh_poll() */
-        if (i++ == 1000) {
-            i = 0;
-            LOG_PRINTF("Loop iteration %d\n", 1000*(j++));
-        }
 
         if (handshake) {
 #define MAX_MESSAGE_LEN 256
@@ -364,6 +361,7 @@ int main(void)
                         noise_handshakestate_free(handshake);
                         handshake = NULL;
                     }
+                    host_packet_length = 0; /* Acknowledge to USART ISR the buffer has been handled */
                 }
                 break;
 
@@ -371,7 +369,16 @@ int main(void)
                 if (noise_handshakestate_split(handshake, &tx_cipher, &rx_cipher) != NOISE_ERROR_NONE) {
                     LOG_PRINTF("Error splitting handshake state\n");
                 } else {
-                    LOG_PRINTF("Noise protocol handshake completed successfully\n");
+                    LOG_PRINTF("Noise protocol handshake completed successfully, handshake hash:\n");
+                    uint8_t buf[BLAKE2S_HASH_SIZE];
+                    if (noise_handshakestate_get_handshake_hash(handshake, buf, sizeof(buf)) != NOISE_ERROR_NONE) {
+                        LOG_PRINTF("Error fetching noise handshake state\n");
+                    } else {
+                        LOG_PRINTF("    ");
+                        for (int i=0; i<sizeof(buf); i++)
+                            LOG_PRINTF("%02x ", buf[i]);
+                        LOG_PRINTF("\n");
+                    }
                 }
 
                 noise_handshakestate_free(handshake);

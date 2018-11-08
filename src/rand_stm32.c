@@ -46,8 +46,6 @@
 #include "crypto/noise-c/src/protocol/internal.h"
 #include "crypto/noise-c/src/crypto/blake2/blake2s.h"
 
-#define BLAKE2S_HASH_SIZE 32
-
 /* FIXME persist state in backup sram */
 extern unsigned _ram_start, _ram_end, _rom_start, _rom_end;
 static uint8_t global_stm_rand_state[BLAKE2S_HASH_SIZE];
