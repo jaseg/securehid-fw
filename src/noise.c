@@ -16,10 +16,11 @@
     } while(0);
 
 
-static uint8_t local_key[CURVE25519_KEY_LEN];
-NoiseCipherState *tx_cipher, *rx_cipher;
 volatile uint8_t host_packet_buf[MAX_HOST_PACKET_SIZE];
 volatile uint8_t host_packet_length = 0;
+
+static uint8_t local_key[CURVE25519_KEY_LEN];
+static NoiseCipherState *tx_cipher = NULL, *rx_cipher = NULL;
 
 
 NoiseHandshakeState *start_protocol_handshake() {
@@ -71,19 +72,15 @@ errout:
 }
 
 NoiseHandshakeState *try_continue_noise_handshake(NoiseHandshakeState *handshake) {
-#define MAX_MESSAGE_LEN 256
-    uint8_t message[MAX_MESSAGE_LEN];
+    int err;
+    uint8_t message[MAX_HOST_PACKET_SIZE];
     NoiseBuffer noise_msg;
     /* Run the protocol handshake */
     switch (noise_handshakestate_get_action(handshake)) {
     case NOISE_ACTION_WRITE_MESSAGE:
         /* Write the next handshake message with a zero-length payload */
         noise_buffer_set_output(noise_msg, message, sizeof(message));
-        if (noise_handshakestate_write_message(handshake, &noise_msg, NULL) != NOISE_ERROR_NONE) {
-            LOG_PRINTF("Error writing handshake message\n");
-            noise_handshakestate_free(handshake);
-            handshake = NULL;
-        }
+        HANDLE_NOISE_ERROR(noise_handshakestate_write_message(handshake, &noise_msg, NULL), "writing handshake message");
         send_packet(usart2_out, message, noise_msg.size);
         break;
 
@@ -91,29 +88,23 @@ NoiseHandshakeState *try_continue_noise_handshake(NoiseHandshakeState *handshake
         if (host_packet_length > 0) {
             /* Read the next handshake message and discard the payload */
             noise_buffer_set_input(noise_msg, (uint8_t *)host_packet_buf, host_packet_length);
-            if (noise_handshakestate_read_message(handshake, &noise_msg, NULL) != NOISE_ERROR_NONE) {
-                LOG_PRINTF("Error reading handshake message\n");
-                noise_handshakestate_free(handshake);
-                handshake = NULL;
-            }
+            HANDLE_NOISE_ERROR(noise_handshakestate_read_message(handshake, &noise_msg, NULL), "reading handshake message");
             host_packet_length = 0; /* Acknowledge to USART ISR the buffer has been handled */
         }
         break;
 
     case NOISE_ACTION_SPLIT:
-        if (noise_handshakestate_split(handshake, &tx_cipher, &rx_cipher) != NOISE_ERROR_NONE) {
-            LOG_PRINTF("Error splitting handshake state\n");
+        HANDLE_NOISE_ERROR(noise_handshakestate_split(handshake, &tx_cipher, &rx_cipher), "splitting handshake state");
+        LOG_PRINTF("Noise protocol handshake completed successfully, handshake hash:\n");
+
+        uint8_t buf[BLAKE2S_HASH_SIZE];
+        if (noise_handshakestate_get_handshake_hash(handshake, buf, sizeof(buf)) != NOISE_ERROR_NONE) {
+            LOG_PRINTF("Error fetching noise handshake state\n");
         } else {
-            LOG_PRINTF("Noise protocol handshake completed successfully, handshake hash:\n");
-            uint8_t buf[BLAKE2S_HASH_SIZE];
-            if (noise_handshakestate_get_handshake_hash(handshake, buf, sizeof(buf)) != NOISE_ERROR_NONE) {
-                LOG_PRINTF("Error fetching noise handshake state\n");
-            } else {
-                LOG_PRINTF("    ");
-                for (size_t i=0; i<sizeof(buf); i++)
-                    LOG_PRINTF("%02x ", buf[i]);
-                LOG_PRINTF("\n");
-            }
+            LOG_PRINTF("    ");
+            for (size_t i=0; i<sizeof(buf); i++)
+                LOG_PRINTF("%02x ", buf[i]);
+            LOG_PRINTF("\n");
         }
 
         noise_handshakestate_free(handshake);
@@ -121,10 +112,34 @@ NoiseHandshakeState *try_continue_noise_handshake(NoiseHandshakeState *handshake
 
     default:
         LOG_PRINTF("Noise protocol handshake failed\n");
-        noise_handshakestate_free(handshake);
-        return NULL;
+        goto errout;
     }
 
     return handshake;
+
+errout:
+    noise_handshakestate_free(handshake);
+    return NULL;
+}
+
+int send_encrypted_message(uint8_t *msg, size_t len) {
+    int err;
+    NoiseBuffer noise_buf;
+    uint8_t raw_buf[MAX_HOST_PACKET_SIZE];
+
+    if (!tx_cipher) {
+        LOG_PRINTF("Cannot send encrypted packet: Data ciphers not yet initialized\n");
+        return -1;
+    }
+
+    memcpy(raw_buf, msg, len); /* This is necessary because noises API doesn't support separate in and out buffers. D'oh! */
+    noise_buffer_set_inout(noise_buf, raw_buf, len, sizeof(raw_buf));
+
+    HANDLE_NOISE_ERROR(noise_cipherstate_encrypt(tx_cipher, &noise_buf), "encrypting data");
+    send_packet(usart2_out, raw_buf, noise_buf.size);
+
+    return 0;
+errout:
+    return -2;
 }
 

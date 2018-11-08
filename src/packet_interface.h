@@ -5,4 +5,6 @@
 
 extern struct dma_usart_file *usart2_out;
 
+void send_packet(struct dma_usart_file *f, const uint8_t *data, size_t len);
+
 #endif

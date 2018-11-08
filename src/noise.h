@@ -20,5 +20,6 @@ extern volatile uint8_t host_packet_length;
 NoiseHandshakeState *start_protocol_handshake(void);
 int generate_identity_key(void);
 NoiseHandshakeState *try_continue_noise_handshake(NoiseHandshakeState *handshake);
+int send_encrypted_message(uint8_t *msg, size_t len);
 
 #endif

@@ -144,9 +144,3 @@ void flush(void *file) {
     nvic_enable_irq(f->irqn);
 }
 
-void send_packet(struct dma_usart_file *f, const uint8_t *data, size_t len) {
-    /* ignore return value as putf is blocking and always succeeds */
-    (void)cobs_encode_incremental(f, putf, (char *)data, len);
-    flush(f);
-}
-

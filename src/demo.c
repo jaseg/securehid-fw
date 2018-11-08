@@ -113,22 +113,47 @@ static void gpio_setup(void)
 	gpio_mode_setup(GPIOE, GPIO_MODE_INPUT, GPIO_PUPD_PULLUP, GPIO3 | GPIO4);
 }
 
+enum packet_types {
+    _RESERVED = 0,
+    HID_KEYBOARD_REPORT = 1,
+    HID_MOUSE_REPORT = 2
+};
+
+struct hid_report_packet {
+    uint8_t type;
+    uint8_t len;
+    uint8_t report[8];
+};
+
 static void hid_in_message_handler(uint8_t device_id, const uint8_t *data, uint32_t length)
 {
-	UNUSED(device_id);
-	UNUSED(data);
 	if (length < 4) {
-		LOG_PRINTF("data too short, type=%d\n", hid_get_type(device_id));
+		LOG_PRINTF("HID report too short\n");
+		return;
+	}
+	if (length > 8) {
+		LOG_PRINTF("HID report too long\n");
 		return;
 	}
 
-	// print only first 4 bytes, since every mouse should have at least these four set.
-	// Report descriptors are not read by driver for now, so we do not know what each byte means
-	LOG_PRINTF("HID EVENT %02X %02X %02X %02X \n", data[0], data[1], data[2], data[3]);
-    /*
-	if (hid_get_type(device_id) == HID_TYPE_KEYBOARD) {
-	}
-    */
+	int type = hid_get_type(device_id);
+    if (type != HID_TYPE_KEYBOARD && type != HID_TYPE_MOUSE) {
+        LOG_PRINTF("Unsupported HID report type %x\n", type);
+        return;
+    }
+
+	LOG_PRINTF("Sending event %02X %02X %02X %02X\n", data[0], data[1], data[2], data[3]);
+    struct hid_report_packet pkt = {
+        .type = type == HID_TYPE_KEYBOARD ? HID_KEYBOARD_REPORT : HID_MOUSE_REPORT,
+        .len = length,
+        .report = {0}
+    };
+    memcpy(pkt.report, data, length);
+
+    if (send_encrypted_message((uint8_t *)&pkt, sizeof(pkt))) {
+        LOG_PRINTF("Error sending HID report packet\n");
+        return;
+    }
 }
 
 volatile struct {

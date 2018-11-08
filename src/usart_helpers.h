@@ -63,7 +63,6 @@ int dma_fifo_push(volatile struct dma_buf *buf, char c);
 int putf(void *file, char c);
 int putb(void *file, const uint8_t *buf, size_t len);
 void flush(void *file);
-void send_packet(struct dma_usart_file *f, const uint8_t *data, size_t len);
 
 /* This macro abomination templates a bunch of dma-specific register/constant names from preprocessor macros passed in
  * from cmake. */

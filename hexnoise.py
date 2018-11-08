@@ -80,3 +80,8 @@ if __name__ == '__main__':
     print('Handshake finished, handshake hash:')
     hexdump(print, proto.get_handshake_hash(), args.width)
 
+    while True:
+        data = proto.decrypt(receive_packet(ser, args.width))
+        print('Decrypted data:')
+        hexdump(print, data, args.width)
+
