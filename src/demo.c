@@ -20,15 +20,15 @@
  *
  */
 
-#include "usart_helpers.h"			/// provides LOG_PRINTF macros used for debugging
-#include "usbh_core.h"				/// provides usbh_init() and usbh_poll()
-#include "usbh_lld_stm32f4.h"		/// provides low level usb host driver for stm32f4 platform
-#include "usbh_driver_hid.h"		/// provides generic usb device driver for Human Interface Device (HID)
-#include "usbh_driver_hub.h"		/// provides usb full speed hub driver (Low speed devices on hub are not supported)
-#include "cobs.h"
+#include "usart_helpers.h"
+#include "usbh_core.h"
+#include "usbh_lld_stm32f4.h"
+#include "usbh_driver_hid.h"
+#include "usbh_driver_hub.h"
 #include "rand_stm32.h"
+#include "packet_interface.h"
+#include "noise.h"
 
- // STM32f407 compatible
 #include <libopencm3/stm32/rcc.h>
 #include <libopencm3/stm32/gpio.h>
 #include <libopencm3/stm32/usart.h>
@@ -43,10 +43,12 @@
 #include <string.h>
 #include <stdlib.h>
 
-#include <noise/protocol.h>
+#ifndef USE_STM32F4_USBH_DRIVER_FS
+#error The full-speed USB driver must be enabled with USE_STM32F4_USBH_DRIVER_FS in usbh_config.h!
+#endif
+
 
 void _fini(void);
-int generate_identity_key(void);
 
 static inline void delay_ms_busy_loop(uint32_t ms) {
 	for (volatile uint32_t i = 0; i < 14903*ms; i++);
@@ -111,17 +113,6 @@ static void gpio_setup(void)
 	gpio_mode_setup(GPIOE, GPIO_MODE_INPUT, GPIO_PUPD_PULLUP, GPIO3 | GPIO4);
 }
 
-static const usbh_dev_driver_t *device_drivers[] = {
-	&usbh_hub_driver,
-	&usbh_hid_driver,
-	NULL
-};
-
-static const usbh_low_level_driver_t * const lld_drivers[] = {
-	&usbh_lld_stm32f4_driver_fs, // Make sure USE_STM32F4_USBH_DRIVER_FS is defined in usbh_config.h
-	NULL
-};
-
 static void hid_in_message_handler(uint8_t device_id, const uint8_t *data, uint32_t length)
 {
 	UNUSED(device_id);
@@ -139,10 +130,6 @@ static void hid_in_message_handler(uint8_t device_id, const uint8_t *data, uint3
 	}
     */
 }
-
-static const hid_config_t hid_config = {
-	.hid_in_message_handler = &hid_in_message_handler
-};
 
 volatile struct {
     struct dma_buf dma;
@@ -168,120 +155,6 @@ void DMA_ISR(DEBUG_USART_DMA_NUM, DEBUG_USART_DMA_STREAM_NUM)(void) {
 }
 
 
-volatile struct {
-    struct dma_buf dma;
-    uint8_t data[128];
-} usart2_buf = { .dma = { .len = sizeof(usart2_buf.data) } };
-
-struct dma_usart_file usart2_out_s = {
-    .usart = USART2,
-    .baudrate = 115200,
-    .dma = DMA1,
-    .stream = 6,
-    .channel = 4,
-    .irqn = NVIC_DMA_IRQ(1, 6),
-    .buf = &usart2_buf.dma
-};
-struct dma_usart_file *usart2_out = &usart2_out_s;
-
-void dma1_stream6_isr(void) {
-	dma_clear_interrupt_flags(usart2_out->dma, usart2_out->stream, DMA_TCIF);
-
-    if (usart2_out->buf->wr_pos != usart2_out->buf->xfr_end) /* buffer not empty */
-        schedule_dma(usart2_out);
-}
-
-static struct cobs_decode_state host_cobs_state;
-#define CURVE25519_KEY_LEN 32
-#define MAX_HOST_PACKET_SIZE 256
-static volatile uint8_t host_packet_buf[MAX_HOST_PACKET_SIZE];
-static volatile uint8_t host_packet_length = 0;
-
-void usart2_isr(void) {
-    if (USART2_SR & USART_SR_ORE) { /* Overrun handling */
-        LOG_PRINTF("USART2 data register overrun\n");
-        /* Clear interrupt flag */
-        (void)USART2_DR; /* FIXME make sure this read is not optimized out */
-        return;
-    }
-
-    uint8_t data = USART2_DR; /* This automatically acknowledges the IRQ */
-
-    if (host_packet_length) {
-        LOG_PRINTF("USART2 COBS buffer overrun\n");
-        return;
-    }
-
-    ssize_t rv = cobs_decode_incremental(&host_cobs_state, (char *)host_packet_buf, sizeof(host_packet_buf), data);
-    if (rv == -2) {
-        LOG_PRINTF("Host interface COBS packet too large\n");
-    } else if (rv < 0) {
-        LOG_PRINTF("Host interface COBS framing error\n");
-    } else if (rv > 0) {
-        host_packet_length = rv;
-    } /* else just return and wait for next byte */
-}
-
-static uint8_t local_key[CURVE25519_KEY_LEN];
-NoiseCipherState *tx_cipher, *rx_cipher;
-
-#define HANDLE_NOISE_ERROR(x, msg) do { \
-        err = x; \
-        if (err != NOISE_ERROR_NONE) { \
-            char errbuf[256]; \
-            noise_strerror(err, errbuf, sizeof(errbuf)); \
-            LOG_PRINTF("Error " msg ": %s\n", errbuf); \
-            goto errout; \
-        } \
-    } while(0);
-
-static NoiseHandshakeState *start_protocol_handshake(void) {
-    /* TODO Noise-C is nice for prototyping, but we should really get rid of it for mostly two reasons:
-     *   * We don't need cipher/protocol agility, and by baking the final protocol into the firmware we can save a lot
-     *     of flash space by not including all the primitives we don't need as well as noise's dynamic protocol
-     *     abstraction layer.
-     *   * Noise-c is not very embedded-friendly, in particular it uses malloc and free. We should be able to run
-     *     everything with statically allocated buffers instead.
-     */
-    NoiseHandshakeState *handshake;
-    int err;
-    
-    HANDLE_NOISE_ERROR(noise_init(), "initializing noise");
-
-    HANDLE_NOISE_ERROR(noise_handshakestate_new_by_name(&handshake, "Noise_XX_25519_ChaChaPoly_BLAKE2s", NOISE_ROLE_RESPONDER), "instantiating handshake pattern");
-
-    NoiseDHState *dh = noise_handshakestate_get_local_keypair_dh(handshake);
-    HANDLE_NOISE_ERROR(noise_dhstate_set_keypair_private(dh, local_key, sizeof(local_key)), "loading local private keys");
-
-    HANDLE_NOISE_ERROR(noise_handshakestate_start(handshake), "starting handshake");
-
-    return handshake;
-
-errout:
-    noise_handshakestate_free(handshake);
-    return 0;
-}
-
-int generate_identity_key(void) {
-    NoiseDHState *dh;
-    int err;
-
-    HANDLE_NOISE_ERROR(noise_dhstate_new_by_name(&dh, "25519"), "creating dhstate for key generation"); 
-    HANDLE_NOISE_ERROR(noise_dhstate_generate_keypair(dh), "generating key pair");
-
-    uint8_t unused[CURVE25519_KEY_LEN]; /* the noise api is a bit bad here. */
-    memset(local_key, 0, sizeof(local_key));
-
-    HANDLE_NOISE_ERROR(noise_dhstate_get_keypair(dh, local_key, sizeof(local_key), unused, sizeof(unused)), "saving key pair");
-
-    return 0;
-
-errout:
-    if (dh)
-        noise_dhstate_free(dh);
-    return -1;
-}
-
 int main(void)
 {
 	clock_setup();
@@ -295,7 +168,6 @@ int main(void)
 #endif
 
     usart_dma_init(usart2_out);
-    cobs_decode_incremental_initialize(&host_cobs_state);
     usart_enable_rx_interrupt(USART2);
     nvic_enable_irq(NVIC_USART2_IRQ);
     nvic_set_priority(NVIC_USART2_IRQ, 3<<4);
@@ -306,16 +178,11 @@ int main(void)
 	LOG_PRINTF("==================================\n");
 
     LOG_PRINTF("Initializing USB...\n");
+    const hid_config_t hid_config = { .hid_in_message_handler = &hid_in_message_handler };
 	hid_driver_init(&hid_config);
 	hub_driver_init();
-
-	/**
-	 * Pass array of supported low level drivers
-	 * In case of stm32f407, there are up to two supported OTG hosts on one chip.
-	 * Each one can be enabled or disabled in usbh_config.h - optimization for speed
-	 *
-	 * Pass array of supported device drivers
-	 */
+    const usbh_dev_driver_t *device_drivers[] = { &usbh_hub_driver, &usbh_hid_driver, NULL };
+    const usbh_low_level_driver_t * const lld_drivers[] = { &usbh_lld_stm32f4_driver_fs, NULL };
 	usbh_init(lld_drivers, device_drivers);
 
 	LOG_PRINTF("Initializing RNG...\n");
@@ -333,67 +200,12 @@ int main(void)
 
 	while (23) {
 		usbh_poll(tim6_get_time_us());
+
+        if (handshake)
+            handshake = try_continue_noise_handshake(handshake);
+
 		delay_ms_busy_loop(1); /* approx 1ms interval between usbh_poll() */
-
-        if (handshake) {
-#define MAX_MESSAGE_LEN 256
-            uint8_t message[MAX_MESSAGE_LEN];
-            NoiseBuffer noise_msg;
-            /* Run the protocol handshake */
-            switch (noise_handshakestate_get_action(handshake)) {
-            case NOISE_ACTION_WRITE_MESSAGE:
-                /* Write the next handshake message with a zero-length payload */
-                noise_buffer_set_output(noise_msg, message, sizeof(message));
-                if (noise_handshakestate_write_message(handshake, &noise_msg, NULL) != NOISE_ERROR_NONE) {
-                    LOG_PRINTF("Error writing handshake message\n");
-                    noise_handshakestate_free(handshake);
-                    handshake = NULL;
-                }
-                send_packet(usart2_out, message, noise_msg.size);
-                break;
-
-            case NOISE_ACTION_READ_MESSAGE:
-                if (host_packet_length > 0) {
-                    /* Read the next handshake message and discard the payload */
-                    noise_buffer_set_input(noise_msg, (uint8_t *)host_packet_buf, host_packet_length);
-                    if (noise_handshakestate_read_message(handshake, &noise_msg, NULL) != NOISE_ERROR_NONE) {
-                        LOG_PRINTF("Error reading handshake message\n");
-                        noise_handshakestate_free(handshake);
-                        handshake = NULL;
-                    }
-                    host_packet_length = 0; /* Acknowledge to USART ISR the buffer has been handled */
-                }
-                break;
-
-            case NOISE_ACTION_SPLIT:
-                if (noise_handshakestate_split(handshake, &tx_cipher, &rx_cipher) != NOISE_ERROR_NONE) {
-                    LOG_PRINTF("Error splitting handshake state\n");
-                } else {
-                    LOG_PRINTF("Noise protocol handshake completed successfully, handshake hash:\n");
-                    uint8_t buf[BLAKE2S_HASH_SIZE];
-                    if (noise_handshakestate_get_handshake_hash(handshake, buf, sizeof(buf)) != NOISE_ERROR_NONE) {
-                        LOG_PRINTF("Error fetching noise handshake state\n");
-                    } else {
-                        LOG_PRINTF("    ");
-                        for (int i=0; i<sizeof(buf); i++)
-                            LOG_PRINTF("%02x ", buf[i]);
-                        LOG_PRINTF("\n");
-                    }
-                }
-
-                noise_handshakestate_free(handshake);
-                handshake = NULL;
-                break;
-
-            default:
-                LOG_PRINTF("Noise protocol handshake failed\n");
-                noise_handshakestate_free(handshake);
-                handshake = 0;
-                break;
-            }
-        }
 	}
-	return 0;
 }
 
 void _fini() {

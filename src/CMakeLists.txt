@@ -22,6 +22,8 @@ add_library (usbhost
     usart_helpers.c
     tinyprintf.c
     cobs.c
+    noise.c
+    packet_interface.c
 )
 
 add_subdirectory (crypto)
