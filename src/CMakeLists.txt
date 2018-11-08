@@ -24,16 +24,25 @@ add_library (usbhost
     cobs.c
 )
 
+add_subdirectory (crypto)
+
+add_definitions (
+    -DBLAKE2S_USE_VECTOR_MATH=0
+)
+
 target_link_libraries (usbhost
+    noise
 	${LIBOPENCM3_LIB}
 )
 
 add_executable (demo
+    rand_stm32.c
 	demo.c
 )
 
 target_link_libraries (demo
 	usbhost
+    noise
 )
 
 add_custom_command (TARGET demo

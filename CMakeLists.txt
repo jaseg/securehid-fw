@@ -32,7 +32,7 @@ set (ARCH_FLAGS
 	"-mthumb -mcpu=cortex-m4 ${FP_FLAGS}"
 )
 set (COMMON_FLAGS
-	"-O2 -g -Wextra -Wshadow -Wredundant-decls -fno-common -ffunction-sections -fdata-sections"
+	"-O2 -g -Wextra -Wshadow -Wredundant-decls -fno-common -ffunction-sections -fdata-sections --specs=nosys.specs"
 )
 
 set (CMAKE_C_FLAGS
@@ -57,7 +57,10 @@ set (CMAKE_EXE_LINKER_FLAGS
 	"--static -nostartfiles -T${CMAKE_SOURCE_DIR}/libusbhost_stm32f4.ld -Wl,-Map=FIXME_ONE.map -Wl,--gc-sections -Wl,--start-group -lc -lgcc -lnosys -Wl,--end-group"
 )
 
-include_directories (${CMAKE_SOURCE_DIR}/include)
+include_directories (
+    ${CMAKE_SOURCE_DIR}/include
+    src/crypto/noise-c/include
+)
 
 function (init_libopencm3)
 	include_directories (${CMAKE_SOURCE_DIR}/libopencm3/include)
