@@ -38,8 +38,8 @@ def send_packet(ser, data, width=16):
 def receive_packet(ser, width=16):
     packet = ser.read_until(b'\0')
     data = cobs.decode(packet[:-1])
-    print(f'\033[93mReceived {len(data)} bytes\033[0m')
-    hexdump(print, data, width)
+    #print(f'\033[93mReceived {len(data)} bytes\033[0m')
+    #hexdump(print, data, width)
     return data
 
 if __name__ == '__main__':
@@ -55,6 +55,7 @@ if __name__ == '__main__':
     ser = serial.Serial(args.serial, args.baudrate)
 
     from noise.connection import NoiseConnection, Keypair
+    from noise.exceptions import NoiseInvalidMessage
 
     STATIC_LOCAL = bytes([
         0xbb, 0xdb, 0x4c, 0xdb, 0xd3, 0x09, 0xf1, 0xa1,
@@ -80,8 +81,29 @@ if __name__ == '__main__':
     print('Handshake finished, handshake hash:')
     hexdump(print, proto.get_handshake_hash(), args.width)
 
-    while True:
-        data = proto.decrypt(receive_packet(ser, args.width))
-        print('Decrypted data:')
-        hexdump(print, data, args.width)
+    def noise_rx(received):
+        data = proto.decrypt(received)
+        #print('Decrypted data:')
+        #hexdump(print, data, args.width)
 
+    while True:
+        try:
+            received = receive_packet(ser, args.width)
+            try:
+                noise_rx(received)
+            except NoiseInvalidMessage as e:
+                orig_n = proto.noise_protocol.cipher_state_decrypt.n
+                print('Invalid noise message', e)
+                for n in [orig_n+1, orig_n+2, orig_n+3]:
+                    try:
+                        proto.noise_protocol.cipher_state_decrypt.n = n
+                        noise_rx(received)
+                        print(f'    Recovered. n={n}')
+                        break
+                    except NoiseInvalidMessage as e:
+                        pass
+                else:
+                    print('    Unrecoverable.')
+                    proto.noise_protocol.cipher_state_decrypt.n = orig_n
+        except Exception as e:
+            print('Invalid framing:', e)
