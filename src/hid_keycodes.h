@@ -1,9 +1,33 @@
 #ifndef __HID_KEYCODES_H__
 #define __HID_KEYCODES_H__
 
+enum mod_levels {
+    LEVEL_NONE,
+    LEVEL_SHIFT,
+    LEVEL_NLEVELS
+};
+
+enum mod_bits {
+    MOD_LCTRL,
+    MOD_LSHIFT,
+    MOD_LALT,
+    MOD_LMETA,
+    MOD_RCTRL,
+    MOD_RSHIFT,
+    MOD_RALT,
+    MOD_RMETA,
+};
+
+enum mod_bitmaps {
+    MOD_XCTRL  = MOD_LCTRL  | MOD_RCTRL,
+    MOD_XSHIFT = MOD_LSHIFT | MOD_RSHIFT,
+    MOD_XALT   = MOD_LALT   | MOD_RALT,
+    MOD_XMETA  = MOD_LMETA  | MOD_RMETA,
+};
+
 struct keymap_entry {
     unsigned char kc;
-    char ch;
+    char ch[LEVEL_NLEVELS];
 };
 
 extern struct keymap_entry keycode_mapping[];

@@ -121,7 +121,9 @@ if __name__ == '__main__':
     from nouns import NOUNS
     from adjectives import ADJECTIVES
     def map_bytes_to_incantation(data):
-        return " ".join(f'{ADJECTIVES[a]:>16} {NOUNS[b]:<16}' for a, b in zip(data[0::2], data[1::2]))
+        elems = [ f'{ADJECTIVES[a]} {NOUNS[b]}' for a, b in zip(data[0::2], data[1::2]) ]
+        nfirst = ", ".join(elems[:-1])
+        return f'{nfirst} and {elems[-1]}'
     print('Handshake channel binding incantation:')
     hhash = proto.get_handshake_hash()
     print('    ' + map_bytes_to_incantation(hhash[:8       ]))

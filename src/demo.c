@@ -133,37 +133,41 @@ static char pairing_buf[512];
 static size_t pairing_buf_pos = 0;
 
 int pairing_check(struct NoiseState *st, const char *buf);
-void pairing_input(uint8_t keycode);
+void pairing_input(uint8_t modbyte, uint8_t keycode);
 void pairing_parse_report(struct hid_report *buf, uint8_t len);
 
 /* Minimum number of bytes of handshake hash to confirm during pairing */
 #define MIN_PAIRING_SEQUENCE_LENGTH 8
 
 int pairing_check(struct NoiseState *st, const char *buf) {
-    LOG_PRINTF("Checking pairing\n");
+    //LOG_PRINTF("Checking pairing\n");
     const char *p = buf;
     int idx = 0;
     do {
         const char *found = strchr(p, ' ');
         size_t plen = found ? (size_t)(found - p) : strlen(p); /* p >= found */
-        int num = -1;
-        /* FIXME ignore "and", ignore commata and dots, handle letter case correctly (currently it's ignored). */
-        for (int i=0; i<256; i++) {
-            if ((!strncmp(p, adjectives[i], plen)) || (!strncmp(p, nouns[i], plen))) {
-                LOG_PRINTF("    idx=%02d h=%02x i=%02x adj=%s n=%s plen=%d s=%s\n", idx, st->handshake_hash[idx], i, adjectives[i], nouns[i], plen, p);
-                num = i;
-                break;
+
+        if (strncasecmp(p, "and", plen)) { /* ignore "and" */
+            int num = -1;
+            /* FIXME ignore "and", ignore commata and dots */
+            for (int i=0; i<256; i++) {
+                if ((!strncasecmp(p, adjectives[i], plen)) || (!strncasecmp(p, nouns[i], plen))) {
+                    //LOG_PRINTF("    idx=%02d h=%02x i=%02x adj=%s n=%s plen=%d s=%s\n", idx, st->handshake_hash[idx], i, adjectives[i], nouns[i], plen, p);
+                    num = i;
+                    break;
+                }
             }
+            if (num == -1) {
+                LOG_PRINTF("Pairing word \"%s\" not found in dictionary\n", p);
+                return -1;
+            }
+            if (st->handshake_hash[idx] != num) {
+                LOG_PRINTF("Pairing data does not match hash\n");
+                return -1;
+            }
+            idx++;
         }
-        if (num == -1) {
-            LOG_PRINTF("Pairing word \"%s\" not found in dictionary\n", p);
-            return -1;
-        }
-        if (st->handshake_hash[idx] != num) {
-            LOG_PRINTF("Pairing data does not match hash\n");
-            return -1;
-        }
-        idx++;
+
         p = strchr(p, ' ');
         if (!p)
             break; /* end of string */
@@ -175,31 +179,46 @@ int pairing_check(struct NoiseState *st, const char *buf) {
         return -1;
     }
 
+    LOG_PRINTF("Pairing sequence match\n");
     return 0;
 }
 
-void pairing_input(uint8_t keycode) {
+void pairing_input(uint8_t modbyte, uint8_t keycode) {
+    uint8_t level = modbyte & MOD_XSHIFT ? LEVEL_SHIFT : LEVEL_NONE;
     switch (keycode) {
         case KEY_ENTER:
             pairing_buf[pairing_buf_pos++] = '\0';
             if (!pairing_check(&noise_state, pairing_buf)) {
                 persist_remote_key(&noise_state);
                 /* FIXME write key to backup memory */
+            } else {
+                /* FIXME sound alarm */
             }
             break;
 
         case KEY_BACKSPACE:
-            pairing_buf[pairing_buf_pos] = '\0'; /* FIXME debug */
             if (pairing_buf_pos > 0)
                 pairing_buf_pos--;
+            pairing_buf[pairing_buf_pos] = '\0'; /* FIXME debug */
             break;
 
         default:
             for (size_t i=0; keycode_mapping[i].kc != KEY_NONE; i++) {
                 if (keycode_mapping[i].kc == keycode) {
+                    char ch = keycode_mapping[i].ch[level];
+                    /* FIXME send decoded char to host here instead of raw hid report to reduce buggability */
+                    if (!(('a' <= ch && ch <= 'z') ||
+                         ('A' <= ch && ch <= 'Z') ||
+                         ('0' <= ch && ch <= '9') ||
+                         (ch == ' ')))
+                        break; /* ignore special chars */
+
                     if (pairing_buf_pos < sizeof(pairing_buf)-1) /* allow for terminating null byte */ {
-                        pairing_buf[pairing_buf_pos++] = keycode_mapping[i].ch;
+                        pairing_buf[pairing_buf_pos++] = ch;
                         pairing_buf[pairing_buf_pos] = '\0'; /* FIXME debug */
+                    } else {
+                        LOG_PRINTF("Pairing confirmation user input buffer full\n");
+                        /* FIXME return error to host? */
                     }
                     break;
                 }
@@ -224,7 +243,7 @@ void pairing_parse_report(struct hid_report *buf, uint8_t len) {
             }
         }
         if (!found) /* key pressed */
-            pairing_input(buf->keycodes[i]);
+            pairing_input(buf->modifiers, buf->keycodes[i]);
     }
 
     memcpy(old_keycodes, buf->keycodes, 6);
