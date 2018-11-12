@@ -28,6 +28,8 @@
 #include "rand_stm32.h"
 #include "packet_interface.h"
 #include "noise.h"
+#include "hid_keycodes.h"
+#include "words.h"
 
 #include <libopencm3/stm32/rcc.h>
 #include <libopencm3/stm32/gpio.h>
@@ -40,12 +42,20 @@
 #include <libopencmsis/core_cm3.h>
 
 #include <stdint.h>
-#include <string.h>
 #include <stdlib.h>
+#include <string.h>
 
 #ifndef USE_STM32F4_USBH_DRIVER_FS
 #error The full-speed USB driver must be enabled with USE_STM32F4_USBH_DRIVER_FS in usbh_config.h!
 #endif
+
+#ifndef MAX_FAILED_HANDSHAKES
+#define MAX_FAILED_HANDSHAKES 3
+#endif
+
+
+static struct NoiseState noise_state;
+static uint8_t remote_key_reference[CURVE25519_KEY_LEN];
 
 
 void _fini(void);
@@ -113,17 +123,99 @@ static void gpio_setup(void)
 	gpio_mode_setup(GPIOE, GPIO_MODE_INPUT, GPIO_PUPD_PULLUP, GPIO3 | GPIO4);
 }
 
-enum packet_types {
-    _RESERVED = 0,
-    HID_KEYBOARD_REPORT = 1,
-    HID_MOUSE_REPORT = 2
-};
+struct hid_report {
+    uint8_t modifiers;
+    uint8_t _reserved;
+    uint8_t keycodes[6];
+} __attribute__((__packed__));
 
-struct hid_report_packet {
-    uint8_t type;
-    uint8_t len;
-    uint8_t report[8];
-};
+static char pairing_buf[512];
+static size_t pairing_buf_pos = 0;
+
+int pairing_check(struct NoiseState *st, const char *buf);
+void pairing_input(uint8_t keycode);
+void pairing_parse_report(struct hid_report *buf, uint8_t len);
+
+int pairing_check(struct NoiseState *st, const char *buf) {
+    const char *p = buf;
+    int idx = 0;
+    do {
+        const char *found = strchr(p, ' ');
+        size_t plen = found ? (size_t)(found - p) : strlen(p); /* p >= found */
+        int num = -1;
+        for (int i=0; i<256; i++) {
+            if (!strncmp(p, adjectives[i], plen) || !strncmp(p, nouns[i], plen)) {
+                num = i;
+                break;
+            }
+        }
+        if (num == -1) {
+            LOG_PRINTF("Pairing word not found in dictionary\n");
+            return -1;
+        }
+        if (st->handshake_hash[idx] != num) {
+            LOG_PRINTF("Pairing data does not match hash\n");
+            return -1;
+        }
+        idx++;
+        p = strchr(p, ' ');
+    } while (p != NULL && idx < BLAKE2S_HASH_SIZE);
+
+    if (idx < 8) {
+        LOG_PRINTF("Pairing sequence too short, only %d bytes of hash checked\n", idx);
+        return -1;
+    }
+
+    return 0;
+}
+
+void pairing_input(uint8_t keycode) {
+    switch (keycode) {
+        case KEY_ENTER:
+            pairing_buf[pairing_buf_pos++] = '\0';
+            if (!pairing_check(&noise_state, pairing_buf)) {
+                persist_remote_key(&noise_state);
+                /* FIXME write key to backup memory */
+            }
+            break;
+
+        case KEY_BACKSPACE:
+            if (pairing_buf_pos > 0)
+                pairing_buf_pos--;
+            break;
+
+        default:
+            for (size_t i=0; i<sizeof(keycode_mapping)/sizeof(keycode_mapping[0]); i++) {
+                if (keycode_mapping[i].kc == keycode) {
+                    if (pairing_buf_pos < sizeof(pairing_buf)-1) /* allow for terminating null byte */
+                        pairing_buf[pairing_buf_pos++] = keycode_mapping[i].ch;
+                    break;
+                }
+            }
+            break;
+    }
+}
+
+void pairing_parse_report(struct hid_report *buf, uint8_t len) {
+    static uint8_t old_keycodes[6] = {0};
+
+    for (int i=0; i<len-2; i++) {
+        if (!buf->keycodes[i])
+            break; /* keycodes are always populated from low to high */
+
+        int found = 0;
+        for (int j=0; j<6; j++) {
+            if (old_keycodes[j] == buf->keycodes[i]) {
+                found = 1;
+                break;
+            }
+        }
+        if (!found) /* key pressed */
+            pairing_input(buf->keycodes[i]);
+    }
+
+    memcpy(old_keycodes, buf->keycodes, 6);
+}
 
 static void hid_in_message_handler(uint8_t device_id, const uint8_t *data, uint32_t length)
 {
@@ -136,21 +228,34 @@ static void hid_in_message_handler(uint8_t device_id, const uint8_t *data, uint3
 		return;
 	}
 
-	int type = hid_get_type(device_id);
-    if (type != HID_TYPE_KEYBOARD && type != HID_TYPE_MOUSE) {
-        LOG_PRINTF("Unsupported HID report type %x\n", type);
-        return;
-    }
-
 	LOG_PRINTF("Sending event %02X %02X %02X %02X\n", data[0], data[1], data[2], data[3]);
     struct hid_report_packet pkt = {
-        .type = type == HID_TYPE_KEYBOARD ? HID_KEYBOARD_REPORT : HID_MOUSE_REPORT,
         .len = length,
         .report = {0}
     };
     memcpy(pkt.report, data, length);
 
-    if (send_encrypted_message((uint8_t *)&pkt, sizeof(pkt))) {
+	int type = hid_get_type(device_id);
+    if (type == HID_TYPE_KEYBOARD) {
+        if (noise_state.handshake_state == HANDSHAKE_DONE_UNKNOWN_HOST) {
+            pkt.type = PAIRING;
+            pairing_parse_report((struct hid_report *)data, length);
+        } else {
+            pkt.type = HID_KEYBOARD_REPORT;
+        }
+    } else if (type == HID_TYPE_MOUSE) {
+        if (noise_state.handshake_state == HANDSHAKE_DONE_UNKNOWN_HOST) {
+            LOG_PRINTF("Not sending HID mouse report during pairing\n");
+            return;
+        } else {
+            pkt.type = HID_MOUSE_REPORT;
+        }
+    } else {
+        LOG_PRINTF("Unsupported HID report type %x\n", type);
+        return;
+    }
+
+    if (send_encrypted_message(&noise_state, (uint8_t *)&pkt, sizeof(pkt))) {
         LOG_PRINTF("Error sending HID report packet\n");
         return;
     }
@@ -213,21 +318,52 @@ int main(void)
 	LOG_PRINTF("Initializing RNG...\n");
     rand_init();
 
+    noise_state_init(&noise_state, remote_key_reference);
+    /* FIXME load remote key from backup memory */
     /* FIXME only run this on first boot and persist key in backup sram. Allow reset via jumper-triggered factory reset function. */
     LOG_PRINTF("Generating identity key...\n");
-    if (generate_identity_key())
+    if (generate_identity_key(&noise_state))
         LOG_PRINTF("Error generating identiy key\n");
-
-    LOG_PRINTF("Starting noise protocol handshake...\n");
-    NoiseHandshakeState *handshake = start_protocol_handshake();
-    if (!handshake)
-        LOG_PRINTF("Error starting protocol handshake.\n");
 
 	while (23) {
 		usbh_poll(tim6_get_time_us());
 
-        if (handshake)
-            handshake = try_continue_noise_handshake(handshake);
+        if (host_packet_length > 0) {
+            struct control_packet *pkt = (struct control_packet *)host_packet_buf;
+            size_t payload_length = host_packet_length - 1;
+
+            if (pkt->type == HOST_INITIATE_HANDSHAKE) {
+                /* It is important that we acknowledge this command right away. Starting the handshake involves key
+                 * generation which takes a few milliseconds. If we'd acknowledge this later, we might run into an
+                 * overrun here since we would be blocking the buffer during key generation. */
+                host_packet_length = 0; /* Acknowledge to USART ISR the buffer has been handled */
+
+                if (payload_length > 0) {
+                    LOG_PRINTF("Extraneous data in INITIATE_HANDSHAKE message\n");
+                } else if (noise_state.failed_handshakes < MAX_FAILED_HANDSHAKES) {
+                    LOG_PRINTF("Starting noise protocol handshake...\n");
+                    if (reset_protocol_handshake(&noise_state))
+                        LOG_PRINTF("Error starting protocol handshake.\n");
+                    pairing_buf_pos = 0; /* Reset channel binding keyboard input buffer */
+                } else {
+                    LOG_PRINTF("Too many failed handshake attempts, not starting another one\n");
+                }
+            } else if (pkt->type == HOST_HANDSHAKE) {
+                LOG_PRINTF("Handling handshake packet of length %d\n", payload_length);
+                int consumed = 0;
+                try_continue_noise_handshake(&noise_state, pkt->payload, payload_length, &consumed);
+                if (consumed)
+                    host_packet_length = 0; /* Acknowledge to USART ISR the buffer has been handled */
+                else /* Otherwise this gets called again in the next iteration of the main loop. Usually that should not happen. */
+                    LOG_PRINTF("Handshake buffer unhandled. Waiting for next iteration.\n");
+
+            } else {
+                host_packet_length = 0; /* Acknowledge to USART ISR the buffer has been handled */
+            }
+        }
+
+        if (noise_state.handshake_state == HANDSHAKE_IN_PROGRESS)
+            try_continue_noise_handshake(&noise_state, NULL, 0, NULL); /* handle outgoing messages */
 
 		delay_ms_busy_loop(1); /* approx 1ms interval between usbh_poll() */
 	}

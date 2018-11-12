@@ -24,6 +24,9 @@ add_library (usbhost
     cobs.c
     noise.c
     packet_interface.c
+    adjectives.c
+    nouns.c
+    hid_keycodes.c
 )
 
 add_subdirectory (crypto)

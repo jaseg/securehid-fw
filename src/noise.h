@@ -16,10 +16,35 @@
 extern volatile uint8_t host_packet_buf[MAX_HOST_PACKET_SIZE];
 extern volatile uint8_t host_packet_length;
 
+enum handshake_state {
+    HANDSHAKE_UNINITIALIZED,
+    HANDSHAKE_NOT_STARTED,
+    HANDSHAKE_IN_PROGRESS,
+    HANDSHAKE_DONE_UNKNOWN_HOST,
+    HANDSHAKE_DONE_KNOWN_HOST,
+};
 
-NoiseHandshakeState *start_protocol_handshake(void);
-int generate_identity_key(void);
-NoiseHandshakeState *try_continue_noise_handshake(NoiseHandshakeState *handshake);
-int send_encrypted_message(uint8_t *msg, size_t len);
+extern volatile enum handshake_state handshake_state;
+
+struct NoiseState {
+    NoiseHandshakeState *handshake;
+    enum handshake_state handshake_state;
+    NoiseCipherState *tx_cipher, *rx_cipher;
+    uint8_t local_key[CURVE25519_KEY_LEN];
+    uint8_t remote_key[CURVE25519_KEY_LEN];
+    uint8_t *remote_key_reference;
+    uint8_t handshake_hash[BLAKE2S_HASH_SIZE];
+    int failed_handshakes;
+};
+
+
+void uninit_handshake(struct NoiseState *st, enum handshake_state new_state);
+void noise_state_init(struct NoiseState *st, uint8_t *remote_key_reference);
+void persist_remote_key(struct NoiseState *st);
+int start_protocol_handshake(struct NoiseState *st);
+int reset_protocol_handshake(struct NoiseState *st);
+int generate_identity_key(struct NoiseState *st);
+enum handshake_state try_continue_noise_handshake(struct NoiseState *st, uint8_t *buf, size_t len, int *buf_consumed);
+int send_encrypted_message(struct NoiseState *st, uint8_t *msg, size_t len);
 
 #endif
