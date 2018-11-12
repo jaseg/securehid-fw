@@ -14,17 +14,27 @@ enum control_packet_types {
 };
 
 enum packet_types {
-    _PACKET_RESERVED = 0,
-    HID_KEYBOARD_REPORT = 1,
-    HID_MOUSE_REPORT = 2,
-    PAIRING = 3,
+    _REPORT_RESERVED = 0,
+    REPORT_KEYBOARD= 1,
+    REPORT_MOUSE= 2,
+    REPORT_PAIRING_INPUT = 3,
+    REPORT_PAIRING_SUCCESS = 4,
+    REPORT_PAIRING_ERROR = 5,
 };
 
 struct hid_report_packet {
     uint8_t type;
-    uint8_t len;
-    uint8_t report[8];
+    union {
+        struct {
+            uint8_t len;
+            uint8_t report[8];
+        } report;
+        struct {
+            char c;
+        } pairing_input;
+    };
 } __attribute__((__packed__));
+
 
 struct control_packet {
     uint8_t type;

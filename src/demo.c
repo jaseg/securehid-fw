@@ -184,6 +184,7 @@ int pairing_check(struct NoiseState *st, const char *buf) {
 }
 
 void pairing_input(uint8_t modbyte, uint8_t keycode) {
+    char ch = 0;
     uint8_t level = modbyte & MOD_XSHIFT ? LEVEL_SHIFT : LEVEL_NONE;
     switch (keycode) {
         case KEY_ENTER:
@@ -191,8 +192,17 @@ void pairing_input(uint8_t modbyte, uint8_t keycode) {
             if (!pairing_check(&noise_state, pairing_buf)) {
                 persist_remote_key(&noise_state);
                 /* FIXME write key to backup memory */
+
+                uint8_t response = REPORT_PAIRING_SUCCESS;
+                if (send_encrypted_message(&noise_state, &response, sizeof(response)))
+                    LOG_PRINTF("Error sending pairing response packet\n");
+
             } else {
                 /* FIXME sound alarm */
+
+                uint8_t response = REPORT_PAIRING_ERROR;
+                if (send_encrypted_message(&noise_state, &response, sizeof(response)))
+                    LOG_PRINTF("Error sending pairing response packet\n");
             }
             break;
 
@@ -200,17 +210,18 @@ void pairing_input(uint8_t modbyte, uint8_t keycode) {
             if (pairing_buf_pos > 0)
                 pairing_buf_pos--;
             pairing_buf[pairing_buf_pos] = '\0'; /* FIXME debug */
+            ch = '\b';
             break;
 
         default:
             for (size_t i=0; keycode_mapping[i].kc != KEY_NONE; i++) {
                 if (keycode_mapping[i].kc == keycode) {
-                    char ch = keycode_mapping[i].ch[level];
-                    /* FIXME send decoded char to host here instead of raw hid report to reduce buggability */
+                    ch = keycode_mapping[i].ch[level];
                     if (!(('a' <= ch && ch <= 'z') ||
                          ('A' <= ch && ch <= 'Z') ||
                          ('0' <= ch && ch <= '9') ||
-                         (ch == ' ')))
+                         (ch == ' ') ||
+                         (ch == '-')))
                         break; /* ignore special chars */
 
                     if (pairing_buf_pos < sizeof(pairing_buf)-1) /* allow for terminating null byte */ {
@@ -218,14 +229,28 @@ void pairing_input(uint8_t modbyte, uint8_t keycode) {
                         pairing_buf[pairing_buf_pos] = '\0'; /* FIXME debug */
                     } else {
                         LOG_PRINTF("Pairing confirmation user input buffer full\n");
-                        /* FIXME return error to host? */
+
+                        uint8_t response = REPORT_PAIRING_ERROR;
+                        if (send_encrypted_message(&noise_state, &response, sizeof(response)))
+                            LOG_PRINTF("Error sending pairing response packet\n");
                     }
                     break;
                 }
             }
             break;
     }
-    LOG_PRINTF("Input: %s\n", pairing_buf);
+
+    if (ch) {
+        LOG_PRINTF("Input: %s\n", pairing_buf);
+        struct hid_report_packet pkt = {
+            .type = REPORT_PAIRING_INPUT,
+            .pairing_input = { .c = ch }
+        };
+        if (send_encrypted_message(&noise_state, (uint8_t *)&pkt, sizeof(pkt))) {
+            LOG_PRINTF("Error sending pairing input packet\n");
+            return;
+        }
+    }
 }
 
 void pairing_parse_report(struct hid_report *buf, uint8_t len) {
@@ -249,43 +274,35 @@ void pairing_parse_report(struct hid_report *buf, uint8_t len) {
     memcpy(old_keycodes, buf->keycodes, 6);
 }
 
-static void hid_in_message_handler(uint8_t device_id, const uint8_t *data, uint32_t length)
-{
-	if (length < 4) {
-		LOG_PRINTF("HID report too short\n");
-		return;
-	}
-	if (length > 8) {
-		LOG_PRINTF("HID report too long\n");
+static void hid_in_message_handler(uint8_t device_id, const uint8_t *data, uint32_t length) {
+	if (length < 4 || length > 8) {
+		LOG_PRINTF("HID report length must be 4 < len < 8, is %d bytes\n", length);
 		return;
 	}
 
 	//LOG_PRINTF("Sending event %02X %02X %02X %02X\n", data[0], data[1], data[2], data[3]);
-    struct hid_report_packet pkt = {
-        .len = length,
-        .report = {0}
-    };
-    memcpy(pkt.report, data, length);
-
 	int type = hid_get_type(device_id);
-    if (type == HID_TYPE_KEYBOARD) {
-        if (noise_state.handshake_state == HANDSHAKE_DONE_UNKNOWN_HOST) {
-            pkt.type = PAIRING;
-            pairing_parse_report((struct hid_report *)data, length);
-        } else {
-            pkt.type = HID_KEYBOARD_REPORT;
-        }
-    } else if (type == HID_TYPE_MOUSE) {
-        if (noise_state.handshake_state == HANDSHAKE_DONE_UNKNOWN_HOST) {
-            LOG_PRINTF("Not sending HID mouse report during pairing\n");
-            return;
-        } else {
-            pkt.type = HID_MOUSE_REPORT;
-        }
-    } else {
+    if (type != HID_TYPE_KEYBOARD && type != HID_TYPE_MOUSE) {
         LOG_PRINTF("Unsupported HID report type %x\n", type);
         return;
     }
+
+    if (noise_state.handshake_state == HANDSHAKE_DONE_UNKNOWN_HOST) {
+        if (type == HID_TYPE_KEYBOARD)
+            pairing_parse_report((struct hid_report *)data, length);
+        else
+            LOG_PRINTF("Not sending HID mouse report during pairing\n");
+        return;
+    }
+
+    struct hid_report_packet pkt = {
+        .type = type == HID_TYPE_KEYBOARD ? REPORT_KEYBOARD : REPORT_MOUSE,
+        .report = {
+            .len = length,
+            .report = {0}
+        }
+    };
+    memcpy(pkt.report.report, data, length);
 
     if (send_encrypted_message(&noise_state, (uint8_t *)&pkt, sizeof(pkt))) {
         LOG_PRINTF("Error sending HID report packet\n");
