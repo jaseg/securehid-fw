@@ -142,7 +142,6 @@ enum handshake_state try_continue_noise_handshake(struct NoiseState *st, uint8_t
             goto errout;
         }
 
-
         HANDLE_NOISE_ERROR(noise_dhstate_get_public_key(remote_dh, st->remote_key, sizeof(st->remote_key)), "getting remote pubkey");
 
         if (!memcmp(st->remote_key, st->remote_key_reference, sizeof(st->remote_key))) { /* keys match */

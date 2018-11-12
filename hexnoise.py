@@ -52,8 +52,8 @@ def send_packet(ser, pkt_type, data, width=16):
 def receive_packet(ser, width=16):
     packet = ser.read_until(b'\0')
     data = cobs.decode(packet[:-1])
-    print(f'\033[93mReceived {len(data)} bytes\033[0m')
-    hexdump(print, data, width)
+    #print(f'\033[93mReceived {len(data)} bytes\033[0m')
+    #hexdump(print, data, width)
     return data[0], data[1:]
 
 if __name__ == '__main__':
@@ -67,6 +67,7 @@ if __name__ == '__main__':
     args = parser.parse_args()
 
     ser = serial.Serial(args.serial, args.baudrate)
+    ser.write(b'\0') # COBS synchronization
 
     import uinput
     ALL_KEYS =  [ v for k, v in uinput.ev.__dict__.items() if k.startswith('KEY_') ]
@@ -117,13 +118,24 @@ if __name__ == '__main__':
     print('Handshake finished, handshake hash:')
     hexdump(print, proto.get_handshake_hash(), args.width)
 
+    from nouns import NOUNS
+    from adjectives import ADJECTIVES
+    def map_bytes_to_incantation(data):
+        return " ".join(f'{ADJECTIVES[a]:>16} {NOUNS[b]:<16}' for a, b in zip(data[0::2], data[1::2]))
+    print('Handshake channel binding incantation:')
+    hhash = proto.get_handshake_hash()
+    print('    ' + map_bytes_to_incantation(hhash[:8       ]))
+    print('    ' + map_bytes_to_incantation(hhash[ 8:16    ]))
+    print('    ' + map_bytes_to_incantation(hhash[   16:24 ]))
+    print('    ' + map_bytes_to_incantation(hhash[      24:]))
+
     old_kcs = set()
     def noise_rx(received, ui):
         global old_kcs
 
         data = proto.decrypt(received)
-        print('Decrypted data:')
-        hexdump(print, data, args.width)
+        #print('Decrypted data:')
+        #hexdump(print, data, args.width)
 
         rtype, rlen, *report = data
         if rtype != 1 or rlen != 8:

@@ -136,21 +136,27 @@ int pairing_check(struct NoiseState *st, const char *buf);
 void pairing_input(uint8_t keycode);
 void pairing_parse_report(struct hid_report *buf, uint8_t len);
 
+/* Minimum number of bytes of handshake hash to confirm during pairing */
+#define MIN_PAIRING_SEQUENCE_LENGTH 8
+
 int pairing_check(struct NoiseState *st, const char *buf) {
+    LOG_PRINTF("Checking pairing\n");
     const char *p = buf;
     int idx = 0;
     do {
         const char *found = strchr(p, ' ');
         size_t plen = found ? (size_t)(found - p) : strlen(p); /* p >= found */
         int num = -1;
+        /* FIXME ignore "and", ignore commata and dots, handle letter case correctly (currently it's ignored). */
         for (int i=0; i<256; i++) {
-            if (!strncmp(p, adjectives[i], plen) || !strncmp(p, nouns[i], plen)) {
+            if ((!strncmp(p, adjectives[i], plen)) || (!strncmp(p, nouns[i], plen))) {
+                LOG_PRINTF("    idx=%02d h=%02x i=%02x adj=%s n=%s plen=%d s=%s\n", idx, st->handshake_hash[idx], i, adjectives[i], nouns[i], plen, p);
                 num = i;
                 break;
             }
         }
         if (num == -1) {
-            LOG_PRINTF("Pairing word not found in dictionary\n");
+            LOG_PRINTF("Pairing word \"%s\" not found in dictionary\n", p);
             return -1;
         }
         if (st->handshake_hash[idx] != num) {
@@ -159,9 +165,12 @@ int pairing_check(struct NoiseState *st, const char *buf) {
         }
         idx++;
         p = strchr(p, ' ');
-    } while (p != NULL && idx < BLAKE2S_HASH_SIZE);
+        if (!p)
+            break; /* end of string */
+        p++; /* skip space */
+    } while (idx < BLAKE2S_HASH_SIZE);
 
-    if (idx < 8) {
+    if (idx < MIN_PAIRING_SEQUENCE_LENGTH) {
         LOG_PRINTF("Pairing sequence too short, only %d bytes of hash checked\n", idx);
         return -1;
     }
@@ -180,20 +189,24 @@ void pairing_input(uint8_t keycode) {
             break;
 
         case KEY_BACKSPACE:
+            pairing_buf[pairing_buf_pos] = '\0'; /* FIXME debug */
             if (pairing_buf_pos > 0)
                 pairing_buf_pos--;
             break;
 
         default:
-            for (size_t i=0; i<sizeof(keycode_mapping)/sizeof(keycode_mapping[0]); i++) {
+            for (size_t i=0; keycode_mapping[i].kc != KEY_NONE; i++) {
                 if (keycode_mapping[i].kc == keycode) {
-                    if (pairing_buf_pos < sizeof(pairing_buf)-1) /* allow for terminating null byte */
+                    if (pairing_buf_pos < sizeof(pairing_buf)-1) /* allow for terminating null byte */ {
                         pairing_buf[pairing_buf_pos++] = keycode_mapping[i].ch;
+                        pairing_buf[pairing_buf_pos] = '\0'; /* FIXME debug */
+                    }
                     break;
                 }
             }
             break;
     }
+    LOG_PRINTF("Input: %s\n", pairing_buf);
 }
 
 void pairing_parse_report(struct hid_report *buf, uint8_t len) {
@@ -228,7 +241,7 @@ static void hid_in_message_handler(uint8_t device_id, const uint8_t *data, uint3
 		return;
 	}
 
-	LOG_PRINTF("Sending event %02X %02X %02X %02X\n", data[0], data[1], data[2], data[3]);
+	//LOG_PRINTF("Sending event %02X %02X %02X %02X\n", data[0], data[1], data[2], data[3]);
     struct hid_report_packet pkt = {
         .len = length,
         .report = {0}

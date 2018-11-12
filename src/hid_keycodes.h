@@ -6,7 +6,7 @@ struct keymap_entry {
     char ch;
 };
 
-extern struct keymap_entry keycode_mapping[37];
+extern struct keymap_entry keycode_mapping[];
 
 enum hid_keycode {
     KEY_NONE = 0x00, // No key pressed

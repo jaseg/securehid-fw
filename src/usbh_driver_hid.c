@@ -96,7 +96,7 @@ void hid_driver_init(const hid_config_t *config)
 static void *init(usbh_device_t *usbh_dev)
 {
 	if (!initialized) {
-		LOG_PRINTF("\n%s/%d : driver not initialized\r\n", __FILE__, __LINE__);
+		LOG_PRINTF("\n%s/%d : driver not initialized\n", __FILE__, __LINE__);
 		return 0;
 	}
 
@@ -341,7 +341,7 @@ static void remove(void *drvdata)
 bool hid_set_report(uint8_t device_id, uint8_t val)
 {
 	if (device_id >= USBH_HID_MAX_DEVICES) {
-		LOG_PRINTF("invalid device id");
+		LOG_PRINTF("invalid device id\n");
 		return false;
 	}
 
@@ -374,7 +374,7 @@ bool hid_set_report(uint8_t device_id, uint8_t val)
 bool hid_is_connected(uint8_t device_id)
 {
 	if (device_id >= USBH_HID_MAX_DEVICES) {
-		LOG_PRINTF("is connected: invalid device id");
+		LOG_PRINTF("is connected: invalid device id\n");
 		return false;
 	}
 	return hid_device[device_id].state_next == STATE_INACTIVE;
