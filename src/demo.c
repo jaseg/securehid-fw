@@ -144,14 +144,36 @@ int pairing_check(struct NoiseState *st, const char *buf) {
     const char *p = buf;
     int idx = 0;
     do {
+        /* Skip over most special chars */
+        while (*p) {
+            char c = *p;
+            if ('0' <= c && c <= '9') break;
+            if ('a' <= c && c <= 'z') break;
+            if ('A' <= c && c <= 'Z') break;
+            if (c == '-') break;
+            p++;
+        }
+
         const char *found = strchr(p, ' ');
         size_t plen = found ? (size_t)(found - p) : strlen(p); /* p >= found */
+
+        while (plen > 0) {
+            char c = p[plen];
+            if ('0' <= c && c <= '9') break;
+            if ('a' <= c && c <= 'z') break;
+            if ('A' <= c && c <= 'Z') break;
+            if (c == '-') break;
+            plen--;
+        }
+        plen++;
+        //LOG_PRINTF("matching: \"%s\" - \"%s\" %d\n", p, p+plen, plen);
 
         if (strncasecmp(p, "and", plen)) { /* ignore "and" */
             int num = -1;
             /* FIXME ignore "and", ignore commata and dots */
             for (int i=0; i<256; i++) {
-                if ((!strncasecmp(p, adjectives[i], plen)) || (!strncasecmp(p, nouns[i], plen))) {
+                if ((!strncasecmp(p, adjectives[i], plen) && plen == strlen(adjectives[i]))
+                 || (!strncasecmp(p, nouns[i],      plen) && plen == strlen(nouns[i]     ))) {
                     //LOG_PRINTF("    idx=%02d h=%02x i=%02x adj=%s n=%s plen=%d s=%s\n", idx, st->handshake_hash[idx], i, adjectives[i], nouns[i], plen, p);
                     num = i;
                     break;
@@ -218,12 +240,8 @@ void pairing_input(uint8_t modbyte, uint8_t keycode) {
             for (size_t i=0; keycode_mapping[i].kc != KEY_NONE; i++) {
                 if (keycode_mapping[i].kc == keycode) {
                     ch = keycode_mapping[i].ch[level];
-                    if (!(('a' <= ch && ch <= 'z') ||
-                         ('A' <= ch && ch <= 'Z') ||
-                         ('0' <= ch && ch <= '9') ||
-                         (ch == ' ') ||
-                         (ch == '-')))
-                        break; /* ignore special chars */
+                    if (!ch)
+                        break;
 
                     if (pairing_buf_pos < sizeof(pairing_buf)-1) /* allow for terminating null byte */ {
                         pairing_buf[pairing_buf_pos++] = ch;
@@ -242,7 +260,7 @@ void pairing_input(uint8_t modbyte, uint8_t keycode) {
     }
 
     if (ch) {
-        LOG_PRINTF("Input: %s\n", pairing_buf);
+        //LOG_PRINTF("Input: %s\n", pairing_buf);
         struct hid_report_packet pkt = {
             .type = REPORT_PAIRING_INPUT,
             .pairing_input = { .c = ch }

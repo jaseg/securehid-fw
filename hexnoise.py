@@ -31,6 +31,9 @@ class ReportType(enum.Enum):
     PAIRING_SUCESS = 4
     PAIRING_ERROR = 5
 
+class ProtocolError(Exception):
+    pass
+
 class Packetizer:
     def __init__(self, serial, debug=False, width=16):
         self.ser, self.debug, self.width = serial, debug, width
@@ -55,11 +58,11 @@ class Packetizer:
 
         pkt_type, data = PacketType(data[0]), data[1:]
         if pkt_type is PacketType.COMM_ERROR:
-            raise ValueError('Device-side serial communication error')
+            raise ProtocolError('Device-side serial communication error')
         elif pkt_type is PacketType.CRYPTO_ERROR:
-            raise ValueError('Device-side cryptographic error')
+            raise ProtocolError('Device-side cryptographic error')
         elif pkt_type is PacketType.TOO_MANY_FAILS:
-            raise ValueError('Device reports too many failed handshake attempts')
+            raise ProtocolError('Device reports too many failed handshake attempts')
         else:
             return pkt_type, data
 
@@ -222,7 +225,7 @@ class NoiseEngine:
             if pkt_type is PacketType.HANDSHAKE:
                 self.proto.read_message(payload)
             else:
-                raise ValueError(f'Incorrect packet type {pkt_type}. Ignoring since this is only test code.')
+                raise ProtocolError(f'Incorrect packet type {pkt_type}. Ignoring since this is only test code.')
         if self.debug:
             print('Handshake finished, handshake hash:')
             hexdump(print, self.proto.get_handshake_hash())
@@ -291,19 +294,26 @@ class NoiseEngine:
                 break
 
             elif msg_type == ReportType.PAIRING_ERROR:
-                raise ValueError('Device-side pairing error') # FIXME find better exception subclass here
+                raise ProtocolError('Device-side pairing error') # FIXME find better exception subclass here
 
             else:
-                raise ValueError('Invalid report type')
+                raise ProtocolError('Invalid report type')
 
     def uinput_passthrough(self):
         with uinput.Device(KeyMapper.ALL_KEYS) as ui:
             old_kcs = set()
-            for msg_type, payload in noise.receive_loop():
-                if msg_type == ReportType.KEYBOARD:
-                    modbyte, _reserved, *keycodes = payload
+            for msg_type, payload in self.receive_loop():
+                report_len, *report = payload
+                if report_len != 8:
+                    raise ValueError('Unsupported report length', report_len)
+
+                if msg_type is ReportType.KEYBOARD:
+                    modbyte, _reserved, *keycodes = report
+                    print('    payload:', payload)
+                    print('    modifier:', list(KeyMapper.map_modifiers(modbyte)))
+                    print('    regular:', list(KeyMapper.map_regulars(keycodes)))
                     keys = { *KeyMapper.map_modifiers(modbyte), *KeyMapper.map_regulars(keycodes) }
-                    if args.debug:
+                    if self.debug:
                         print('Emitting:', keys)
 
                     for key in keys - old_kcs:
@@ -313,7 +323,7 @@ class NoiseEngine:
                     ui.syn()
                     old_kcs = keys
 
-                elif msg_type == ReportType.MOUSE:
+                elif msg_type is ReportType.MOUSE:
                     # FIXME unhandled
                     pass
 

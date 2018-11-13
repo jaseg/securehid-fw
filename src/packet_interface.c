@@ -25,10 +25,11 @@ struct dma_usart_file usart2_out_s = {
 struct dma_usart_file *usart2_out = &usart2_out_s;
 
 void dma1_stream6_isr(void) {
+    static unsigned int fifo_errors = 0; /* debug */
     if (dma_get_interrupt_flag(usart2_out->dma, usart2_out->stream, DMA_FEIF)) {
         /* Ignore FIFO errors as they're 100% non-critical for UART applications */
         dma_clear_interrupt_flags(usart2_out->dma, usart2_out->stream, DMA_FEIF);
-        LOG_PRINTF("USART2 DMA FIFO error\n");
+        fifo_errors++;
         return;
     }
 

@@ -5,8 +5,7 @@ import re
 import serial
 import gi
 gi.require_version('Gtk', '3.0')
-gi.require_version('Pango', '1.0')
-from gi.repository import Gtk, Pango
+from gi.repository import Gtk, Gdk, Pango, GLib
 
 import hexnoise
 
@@ -27,39 +26,27 @@ class PairingWindow(Gtk.Window):
         self.label.set_markup('<b>Step 1</b>\n\nContacting device...')
         self.vbox.pack_start(self.label, True, True, 0)
 
-        self.textview = Gtk.TextView()
-        self.textview.set_editable(False)
-        self.textbuffer = self.textview.get_buffer()
-        self.tag_nomatch = self.textbuffer.create_tag("nomatch", weight=Pango.Weight.BOLD)
-        self.tag_match = self.textbuffer.create_tag("match", background='#AAFFAA', weight=Pango.Weight.BOLD)
-
-        self.vbox.pack_start(self.textview, True, True, 0)
+        self.entry = Gtk.Entry()
+        self.entry.set_editable(False)
+        self.vbox.pack_start(self.entry, True, True, 0)
 
         self.add(self.vbox)
 
-        self.handshaker = threading.Thread(target=self.run_handshake, daemon=True)
+        self.handshaker = threading.Thread(target=self.pair, daemon=True)
         self.handshaker.start()
 
-    @classmethod
-    def matchlen(self, ref, text):
-        words = ref.split()
-        parts = text.split()
-        clean = lambda b: re.sub('^[^a-zA-Z0-9-]*', '', re.sub('[^a-zA-Z0-9-]*$', '', b)).lower()
-
-        good = ''
-        for a, b in zip(words[:-1], parts[:-1]):
-            if a == clean(b):
-                good = f'{good}b '
-
-        rest = clean(parts[-1])
-        if words[-1].startswith(rest):
-            good = f'{good} {rest}'
-        return len(good)
-
-    def run_handshake(self):
+    def pair(self):
         self.packetizer = hexnoise.Packetizer(self.serial, debug=self.debug)
         self.noise = hexnoise.NoiseEngine(self.packetizer, debug=self.debug)
 
+        for i in range(10):
+            try:
+                self.run_handshake()
+                break
+            except hexnoise.ProtocolError as e:
+                print(e)
+
+    def run_handshake(self):
         self.noise.perform_handshake()
 
         binding_incantation = self.noise.channel_binding_incantation()
@@ -67,19 +54,25 @@ class PairingWindow(Gtk.Window):
                               f'Enter the following incantation, then press enter.\n'
                               f'<b>{binding_incantation}</b>')
         
-        for user_input in self.noise.pairing_messages():
-            print('got:', user_input)
-            self.textbuffer.set_text(user_input)
-            #i1, i2 = self.textbuffer.get_start_iter(), self.textbuffer.get_end_iter()
-            #self.textbuffer.apply_tag(self.tag_nomatch, i1, i2)
+        def update_text(text):
+            self.entry.set_text(text)
+            self.entry.set_position(len(text))
 
-            #i1, i2 = self.textbuffer.get_start_iter(), self.textbuffer.get_start_iter()
-            #i2.forward_chars(self.matchlen(binding_incantation, user_input))
-            #self.textbuffer.apply_tag(self.tag_match, i1, i2)
+            clean = lambda s: re.sub('[^a-z0-9-]', '', s.lower())
+            if clean(binding_incantation).startswith(clean(text)):
+                color = 0.9, 1.0, 0.9 # light red
+            else:
+                color = 1.0, 0.9, 0.9 # light green
+            self.entry.override_background_color(Gtk.StateType.NORMAL, Gdk.RGBA(*color, 1.0))
+
+        for user_input in self.noise.pairing_messages():
+            print(f'User input: "{user_input}"')
+            GLib.idle_add(update_text, user_input)
 
         self.label.set_markup(f'<b>Done!</b>')
 
-        #noise.uinput_passthrough()
+        # FIXME demo
+        self.noise.uinput_passthrough()
 
 if __name__ == '__main__':
     import argparse
