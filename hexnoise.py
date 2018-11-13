@@ -225,7 +225,7 @@ class NoiseEngine:
                 raise ValueError(f'Incorrect packet type {pkt_type}. Ignoring since this is only test code.')
         if self.debug:
             print('Handshake finished, handshake hash:')
-            hexdump(print, self.proto.get_handshake_hash(), args.width)
+            hexdump(print, self.proto.get_handshake_hash())
 
     def channel_binding_incantation(self):
         hhash = self.proto.get_handshake_hash()
@@ -245,7 +245,7 @@ class NoiseEngine:
             rtype, data = self._decrypt(received)
             if self.debug:
                 print(f'Decrypted packet {rtype} ({rtype.value}):')
-                hexdump(print, data, args.width)
+                hexdump(print, data)
             yield rtype, data
 
     def _decrypt(self, received):
@@ -271,7 +271,7 @@ class NoiseEngine:
         def setter(n):
             self.proto.noise_protocol.cipher_state_decrypt.n = nold + n
 
-        with suppress(NoiseInvalMessage):
+        with suppress(NoiseInvalidMessage):
             yield setter
 
         proto.noise_protocol.cipher_state_decrypt.n = nold
