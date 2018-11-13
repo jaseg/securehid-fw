@@ -42,6 +42,7 @@
 
 #include "usart_helpers.h"
 #include "rand_stm32.h"
+#include "tracing.h"
 
 #include "crypto/noise-c/src/protocol/internal.h"
 #include "crypto/noise-c/src/crypto/blake2/blake2s.h"
@@ -93,6 +94,7 @@ const char *extraction_constant = "Blake2 RNG extraction constant";
 const char *chain_constant = "Blake2 RNG chaining constant";
 
 void noise_rand_bytes(void *bytes, size_t size) {
+    TRACING_SET(TR_RNG);
     BLAKE2s_context_t out_ctx, chain_ctx;
     uint8_t *out = (uint8_t *)bytes;
     uint8_t hash_buf[BLAKE2S_HASH_SIZE];
@@ -123,6 +125,7 @@ void noise_rand_bytes(void *bytes, size_t size) {
     memset(&out_ctx, 0, sizeof(out_ctx));
     memset(&chain_ctx, 0, sizeof(chain_ctx));
     memset(hash_buf, 0, sizeof(hash_buf));
+    TRACING_CLEAR(TR_RNG);
 }
 
 #ifdef ED25519_CUSTOMRANDOM /* We are building against ed25519-donna, which needs a random function */

@@ -30,6 +30,7 @@
 #include "noise.h"
 #include "hid_keycodes.h"
 #include "words.h"
+#include "tracing.h"
 
 #include <libopencm3/stm32/rcc.h>
 #include <libopencm3/stm32/gpio.h>
@@ -70,6 +71,7 @@ static void clock_setup(void) {
 	rcc_clock_setup_hse_3v3(&hse_8mhz_3v3[CLOCK_3V3_168MHZ]);
 
 	rcc_periph_clock_enable(RCC_GPIOA);
+	rcc_periph_clock_enable(RCC_GPIOD);
 	rcc_periph_clock_enable(RCC_GPIOE);
 
 	rcc_periph_clock_enable(RCC_USART1);
@@ -103,6 +105,9 @@ static uint32_t tim6_get_time_us(void)
 
 static void gpio_setup(void)
 {
+    /* Tracing */
+	gpio_mode_setup(GPIOD, GPIO_MODE_OUTPUT, GPIO_PUPD_NONE, 0xffff);
+
     /* D2, D3 LEDs */
 	gpio_mode_setup(GPIOA, GPIO_MODE_OUTPUT, GPIO_PUPD_NONE, GPIO6 | GPIO7);
 	gpio_set(GPIOA, GPIO6 | GPIO7);
@@ -294,8 +299,10 @@ void pairing_parse_report(struct hid_report *buf, uint8_t len) {
 }
 
 static void hid_in_message_handler(uint8_t device_id, const uint8_t *data, uint32_t length) {
+    TRACING_SET(TR_HID_MESSAGE_HANDLER);
 	if (length < 4 || length > 8) {
 		LOG_PRINTF("HID report length must be 4 < len < 8, is %d bytes\n", length);
+        TRACING_CLEAR(TR_HID_MESSAGE_HANDLER);
 		return;
 	}
 
@@ -303,6 +310,7 @@ static void hid_in_message_handler(uint8_t device_id, const uint8_t *data, uint3
 	int type = hid_get_type(device_id);
     if (type != HID_TYPE_KEYBOARD && type != HID_TYPE_MOUSE) {
         LOG_PRINTF("Unsupported HID report type %x\n", type);
+        TRACING_CLEAR(TR_HID_MESSAGE_HANDLER);
         return;
     }
 
@@ -311,6 +319,7 @@ static void hid_in_message_handler(uint8_t device_id, const uint8_t *data, uint3
             pairing_parse_report((struct hid_report *)data, length);
         else
             LOG_PRINTF("Not sending HID mouse report during pairing\n");
+        TRACING_CLEAR(TR_HID_MESSAGE_HANDLER);
         return;
     }
 
@@ -325,8 +334,10 @@ static void hid_in_message_handler(uint8_t device_id, const uint8_t *data, uint3
 
     if (send_encrypted_message(&noise_state, (uint8_t *)&pkt, sizeof(pkt))) {
         LOG_PRINTF("Error sending HID report packet\n");
+        TRACING_CLEAR(TR_HID_MESSAGE_HANDLER);
         return;
     }
+    TRACING_CLEAR(TR_HID_MESSAGE_HANDLER);
 }
 
 volatile struct {
@@ -346,9 +357,11 @@ struct dma_usart_file debug_out_s = {
 struct dma_usart_file *debug_out = &debug_out_s;
 
 void DMA_ISR(DEBUG_USART_DMA_NUM, DEBUG_USART_DMA_STREAM_NUM)(void) {
+    TRACING_SET(TR_DEBUG_OUT_DMA_IRQ);
     if (dma_get_interrupt_flag(debug_out->dma, debug_out->stream, DMA_FEIF)) {
         /* Ignore FIFO errors as they're 100% non-critical for UART applications */
         dma_clear_interrupt_flags(debug_out->dma, debug_out->stream, DMA_FEIF);
+        TRACING_CLEAR(TR_DEBUG_OUT_DMA_IRQ);
         return;
     }
 
@@ -357,6 +370,7 @@ void DMA_ISR(DEBUG_USART_DMA_NUM, DEBUG_USART_DMA_STREAM_NUM)(void) {
 
     if (debug_out->buf->wr_pos != debug_out->buf->xfr_end) /* buffer not empty */
         schedule_dma(debug_out);
+    TRACING_CLEAR(TR_DEBUG_OUT_DMA_IRQ);
 }
 
 
@@ -401,8 +415,11 @@ int main(void)
         LOG_PRINTF("Error generating identiy key\n");
 
 	while (23) {
+        TRACING_SET(TR_USBH_POLL);
 		usbh_poll(tim6_get_time_us());
+        TRACING_CLEAR(TR_USBH_POLL);
 
+        TRACING_SET(TR_HOST_PKT_HANDLER);
         if (host_packet_length > 0) {
             struct control_packet *pkt = (struct control_packet *)host_packet_buf;
             size_t payload_length = host_packet_length - 1;
@@ -427,11 +444,13 @@ int main(void)
                 }
             } else if (pkt->type == HOST_HANDSHAKE) {
                 LOG_PRINTF("Handling handshake packet of length %d\n", payload_length);
+                TRACING_SET(TR_NOISE_HANDSHAKE);
                 if (try_continue_noise_handshake(&noise_state, pkt->payload, payload_length)) {
+                    TRACING_CLEAR(TR_NOISE_HANDSHAKE);
                     LOG_PRINTF("Reporting handshake error to host\n");
                     struct control_packet out = { .type=HOST_CRYPTO_ERROR };
                     send_packet(usart2_out, (uint8_t *)&out, sizeof(out));
-                }
+                } else TRACING_CLEAR(TR_NOISE_HANDSHAKE);
                 host_packet_length = 0; /* Acknowledge to USART ISR the buffer has been handled */
 
             } else {
@@ -453,13 +472,16 @@ int main(void)
                 pairing_buf_pos = 0; /* Reset channel binding keyboard input buffer */
             }
         }
+        TRACING_CLEAR(TR_HOST_PKT_HANDLER);
 
         if (noise_state.handshake_state == HANDSHAKE_IN_PROGRESS) {
+            TRACING_SET(TR_NOISE_HANDSHAKE);
             if (try_continue_noise_handshake(&noise_state, NULL, 0)) { /* handle outgoing messages */
+                TRACING_CLEAR(TR_NOISE_HANDSHAKE);
                 LOG_PRINTF("Reporting handshake error to host\n");
                 struct control_packet pkt = { .type=HOST_CRYPTO_ERROR };
                 send_packet(usart2_out, (uint8_t *)&pkt, sizeof(pkt));
-            }
+            } else TRACING_CLEAR(TR_NOISE_HANDSHAKE);
         }
 	}
 }

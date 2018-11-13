@@ -277,7 +277,7 @@ class NoiseEngine:
         with suppress(NoiseInvalidMessage):
             yield setter
 
-        proto.noise_protocol.cipher_state_decrypt.n = nold
+        self.proto.noise_protocol.cipher_state_decrypt.n = nold
 
     def pairing_messages(self):
         user_input = ''
@@ -309,12 +309,11 @@ class NoiseEngine:
 
                 if msg_type is ReportType.KEYBOARD:
                     modbyte, _reserved, *keycodes = report
-                    print('    payload:', payload)
-                    print('    modifier:', list(KeyMapper.map_modifiers(modbyte)))
-                    print('    regular:', list(KeyMapper.map_regulars(keycodes)))
+                    import binascii
                     keys = { *KeyMapper.map_modifiers(modbyte), *KeyMapper.map_regulars(keycodes) }
                     if self.debug:
                         print('Emitting:', keys)
+                    print('payload:', binascii.hexlify(payload), 'emitting:', keys)
 
                     for key in keys - old_kcs:
                         ui.emit(key, 1, syn=False)
