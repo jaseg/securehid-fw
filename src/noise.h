@@ -14,7 +14,7 @@
 
 
 extern volatile uint8_t host_packet_buf[MAX_HOST_PACKET_SIZE];
-extern volatile uint8_t host_packet_length;
+extern volatile int host_packet_length;
 
 enum handshake_state {
     HANDSHAKE_UNINITIALIZED,
@@ -44,7 +44,7 @@ void persist_remote_key(struct NoiseState *st);
 int start_protocol_handshake(struct NoiseState *st);
 int reset_protocol_handshake(struct NoiseState *st);
 int generate_identity_key(struct NoiseState *st);
-enum handshake_state try_continue_noise_handshake(struct NoiseState *st, uint8_t *buf, size_t len, int *buf_consumed);
+int try_continue_noise_handshake(struct NoiseState *st, uint8_t *buf, size_t len);
 int send_encrypted_message(struct NoiseState *st, uint8_t *msg, size_t len);
 
 #endif

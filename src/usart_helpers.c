@@ -71,6 +71,7 @@ void usart_dma_init(struct dma_usart_file *f) {
 	dma_set_memory_size(f->dma, f->stream, DMA_SxCR_MSIZE_8BIT);
 	dma_set_priority(f->dma, f->stream, DMA_SxCR_PL_VERY_HIGH);
 	dma_enable_transfer_complete_interrupt(f->dma, f->stream);
+	dma_enable_fifo_error_interrupt(f->dma, f->stream);
     usart_enable_tx_dma(f->usart);
 }
 
@@ -111,6 +112,7 @@ int putf(void *file, char c) {
     /* push char to fifo, busy-loop if stalled to wait for USART to empty fifo via DMA */
     while (dma_fifo_push(f->buf, c) == -EBUSY) {
         nvic_enable_irq(f->irqn);
+        flush(f);
         nvic_disable_irq(f->irqn);
     }
     nvic_enable_irq(f->irqn);
@@ -137,8 +139,9 @@ void flush(void *file) {
 
     nvic_disable_irq(f->irqn);
     /* If the DMA stream is idle right now, schedule a transfer */
-    if (!(DMA_SCR(f->dma, f->stream) & DMA_SxCR_EN) /* DMA is not running */
-            && !dma_get_interrupt_flag(f->dma, f->stream, DMA_TCIF)/* DMA interrupt is clear */) {
+    if (!(DMA_SCR(f->dma, f->stream) & DMA_SxCR_EN)) { /* DMA is not running */
+            //&& !dma_get_interrupt_flag(f->dma, f->stream, DMA_TCIF)/* DMA interrupt is clear */) {
+        dma_clear_interrupt_flags(f->dma, f->stream, DMA_TCIF);
         schedule_dma(f);
     }
     nvic_enable_irq(f->irqn);

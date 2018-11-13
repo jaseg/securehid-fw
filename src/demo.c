@@ -50,7 +50,7 @@
 #endif
 
 #ifndef MAX_FAILED_HANDSHAKES
-#define MAX_FAILED_HANDSHAKES 3
+#define MAX_FAILED_HANDSHAKES 5
 #endif
 
 
@@ -200,6 +200,7 @@ void pairing_input(uint8_t modbyte, uint8_t keycode) {
             } else {
                 /* FIXME sound alarm */
 
+                pairing_buf_pos = 0; /* Reset input buffer */
                 uint8_t response = REPORT_PAIRING_ERROR;
                 if (send_encrypted_message(&noise_state, &response, sizeof(response)))
                     LOG_PRINTF("Error sending pairing response packet\n");
@@ -327,6 +328,13 @@ struct dma_usart_file debug_out_s = {
 struct dma_usart_file *debug_out = &debug_out_s;
 
 void DMA_ISR(DEBUG_USART_DMA_NUM, DEBUG_USART_DMA_STREAM_NUM)(void) {
+    if (dma_get_interrupt_flag(debug_out->dma, debug_out->stream, DMA_FEIF)) {
+        /* Ignore FIFO errors as they're 100% non-critical for UART applications */
+        dma_clear_interrupt_flags(debug_out->dma, debug_out->stream, DMA_FEIF);
+        return;
+    }
+
+    /* Transfer complete */
 	dma_clear_interrupt_flags(debug_out->dma, debug_out->stream, DMA_TCIF);
 
     if (debug_out->buf->wr_pos != debug_out->buf->xfr_end) /* buffer not empty */
@@ -396,25 +404,45 @@ int main(void)
                     pairing_buf_pos = 0; /* Reset channel binding keyboard input buffer */
                 } else {
                     LOG_PRINTF("Too many failed handshake attempts, not starting another one\n");
+                    struct control_packet out = { .type=HOST_TOO_MANY_FAILS };
+                    send_packet(usart2_out, (uint8_t *)&out, sizeof(out));
                 }
             } else if (pkt->type == HOST_HANDSHAKE) {
                 LOG_PRINTF("Handling handshake packet of length %d\n", payload_length);
-                int consumed = 0;
-                try_continue_noise_handshake(&noise_state, pkt->payload, payload_length, &consumed);
-                if (consumed)
-                    host_packet_length = 0; /* Acknowledge to USART ISR the buffer has been handled */
-                else /* Otherwise this gets called again in the next iteration of the main loop. Usually that should not happen. */
-                    LOG_PRINTF("Handshake buffer unhandled. Waiting for next iteration.\n");
+                if (try_continue_noise_handshake(&noise_state, pkt->payload, payload_length)) {
+                    LOG_PRINTF("Reporting handshake error to host\n");
+                    struct control_packet out = { .type=HOST_CRYPTO_ERROR };
+                    send_packet(usart2_out, (uint8_t *)&out, sizeof(out));
+                }
+                host_packet_length = 0; /* Acknowledge to USART ISR the buffer has been handled */
 
             } else {
+                LOG_PRINTF("Unhandled packet of type %d\n", pkt->type);
                 host_packet_length = 0; /* Acknowledge to USART ISR the buffer has been handled */
+            }
+
+        } else if (host_packet_length < 0) { /* USART error */
+            host_packet_length = 0; /* Acknowledge to USART ISR the error has been handled */
+            if (noise_state.handshake_state < HANDSHAKE_DONE_UNKNOWN_HOST) {
+                LOG_PRINTF("USART error, aborting handshake\n")
+
+                struct control_packet pkt = { .type=HOST_COMM_ERROR };
+                send_packet(usart2_out, (uint8_t *)&pkt, sizeof(pkt));
+
+                if (reset_protocol_handshake(&noise_state))
+                    LOG_PRINTF("Error starting protocol handshake.\n");
+
+                pairing_buf_pos = 0; /* Reset channel binding keyboard input buffer */
             }
         }
 
-        if (noise_state.handshake_state == HANDSHAKE_IN_PROGRESS)
-            try_continue_noise_handshake(&noise_state, NULL, 0, NULL); /* handle outgoing messages */
-
-		delay_ms_busy_loop(1); /* approx 1ms interval between usbh_poll() */
+        if (noise_state.handshake_state == HANDSHAKE_IN_PROGRESS) {
+            if (try_continue_noise_handshake(&noise_state, NULL, 0)) { /* handle outgoing messages */
+                LOG_PRINTF("Reporting handshake error to host\n");
+                struct control_packet pkt = { .type=HOST_CRYPTO_ERROR };
+                send_packet(usart2_out, (uint8_t *)&pkt, sizeof(pkt));
+            }
+        }
 	}
 }
 

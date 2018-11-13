@@ -216,7 +216,7 @@ void cobs_decode_incremental_initialize(struct cobs_decode_state *state) {
 int cobs_decode_incremental(struct cobs_decode_state *state, char *dst, size_t dstlen, char src) {
     if (state->p == 0) {
         if (src == 0)
-            goto errout; /* invalid framing. An empty frame would be [...] 00 01 00, not [...] 00 00 */
+            goto empty_errout; /* invalid framing. An empty frame would be [...] 00 01 00, not [...] 00 00 */
         state->c = (unsigned char)src;
         state->p++;
         return 0;
@@ -250,6 +250,10 @@ int cobs_decode_incremental(struct cobs_decode_state *state, char *dst, size_t d
 errout:
     cobs_decode_incremental_initialize(state);
     return -1;
+
+empty_errout:
+    cobs_decode_incremental_initialize(state);
+    return -3;
 }
 
 #ifdef VALIDATION

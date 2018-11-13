@@ -19,6 +19,9 @@ class PacketType(enum.Enum):
     INITIATE_HANDSHAKE = 1
     HANDSHAKE = 2
     DATA = 3
+    COMM_ERROR = 4
+    CRYPTO_ERROR = 5
+    TOO_MANY_FAILS = 6
 
 class ReportType(enum.Enum):
     _RESERVED = 0
@@ -45,10 +48,20 @@ class Packetizer:
     def receive_packet(self):
         packet = self.ser.read_until(b'\0')
         data = cobs.decode(packet[:-1])
+
         if self.debug:
             print(f'\033[93mReceived {len(data)} bytes\033[0m')
             hexdump(print, data, self.width)
-        return PacketType(data[0]), data[1:]
+
+        pkt_type, data = PacketType(data[0]), data[1:]
+        if pkt_type is PacketType.COMM_ERROR:
+            raise ValueError('Device-side serial communication error')
+        elif pkt_type is PacketType.CRYPTO_ERROR:
+            raise ValueError('Device-side cryptographic error')
+        elif pkt_type is PacketType.TOO_MANY_FAILS:
+            raise ValueError('Device reports too many failed handshake attempts')
+        else:
+            return pkt_type, data
 
 class KeyMapper:
     Keycode = enum.Enum('Keycode', start=0, names='''
@@ -323,8 +336,9 @@ if __name__ == '__main__':
     print(noise.channel_binding_incantation())
 
     for user_input in noise.pairing_messages():
-        print('\033[2K\r', end='')
-        print('Pairing input:', user_input, end='', flush=True)
+        if not args.debug:
+            print('\033[2K\r', end='')
+        print('Pairing input:', user_input, end='' if not args.debug else '\n', flush=True)
     print()
     print('Pairing success')
 

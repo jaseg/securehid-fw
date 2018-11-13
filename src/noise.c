@@ -17,7 +17,7 @@
 
 
 volatile uint8_t host_packet_buf[MAX_HOST_PACKET_SIZE];
-volatile uint8_t host_packet_length = 0;
+volatile int host_packet_length = 0;
 
 
 void noise_state_init(struct NoiseState *st, uint8_t *remote_key_reference) {
@@ -90,7 +90,7 @@ void uninit_handshake(struct NoiseState *st, enum handshake_state new_state) {
     st->handshake = NULL;
 }
 
-enum handshake_state try_continue_noise_handshake(struct NoiseState *st, uint8_t *buf, size_t len, int *buf_consumed) {
+int try_continue_noise_handshake(struct NoiseState *st, uint8_t *buf, size_t len) {
     int err;
     struct {
         struct control_packet header;
@@ -111,12 +111,14 @@ enum handshake_state try_continue_noise_handshake(struct NoiseState *st, uint8_t
         noise_buffer_set_output(noise_msg, &pkt.payload, sizeof(pkt.payload));
         HANDLE_NOISE_ERROR(noise_handshakestate_write_message(st->handshake, &noise_msg, NULL), "writing handshake message");
         send_packet(usart2_out, (uint8_t *)&pkt, noise_msg.size + sizeof(pkt.header));
+        if (buf) {
+            LOG_PRINTF("Warning: dropping unneeded host buffer of length %d bytes\n", len);
+        }
         break;
 
     case NOISE_ACTION_READ_MESSAGE:
         if (buf) {
             /* Read the next handshake message and discard the payload */
-            *buf_consumed = 1;
             noise_buffer_set_input(noise_msg, buf, len);
             HANDLE_NOISE_ERROR(noise_handshakestate_read_message(st->handshake, &noise_msg, NULL), "reading handshake message");
         }
@@ -157,12 +159,12 @@ enum handshake_state try_continue_noise_handshake(struct NoiseState *st, uint8_t
         goto errout;
     }
 
-    return st->handshake_state;
+    return 0;
 errout:
     uninit_handshake(st, HANDSHAKE_UNINITIALIZED);
     st->failed_handshakes++;
     LOG_PRINTF("Noise protocol handshake failed, %d failed attempts\n", st->failed_handshakes);
-    return st->handshake_state;
+    return -1;
 }
 
 void persist_remote_key(struct NoiseState *st) {

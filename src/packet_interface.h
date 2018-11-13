@@ -11,6 +11,9 @@ enum control_packet_types {
     HOST_INITIATE_HANDSHAKE = 1,
     HOST_HANDSHAKE = 2,
     HOST_DATA = 3,
+    HOST_COMM_ERROR = 4,
+    HOST_CRYPTO_ERROR = 5,
+    HOST_TOO_MANY_FAILS = 6,
 };
 
 enum packet_types {
