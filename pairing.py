@@ -1,6 +1,8 @@
 #!/usr/bin/env python3
 import threading
+import binascii
 import re
+import os
 
 import serial
 import gi
@@ -14,6 +16,7 @@ class PairingWindow(Gtk.Window):
         Gtk.Window.__init__(self, title='SecureHID pairing')
         self.noise = noise
         self.debug = debug
+        self.trusted = False
 
         self.set_border_width(10)
         self.set_default_size(600, 200)
@@ -29,6 +32,16 @@ class PairingWindow(Gtk.Window):
         self.entry = Gtk.Entry()
         self.entry.set_editable(False)
         self.vbox.pack_start(self.entry, True, True, 0)
+
+        self.confirm_button = Gtk.Button(label='Trust this device')
+        self.confirm_button.connect('clicked', self.confirm_trust)
+        self.confirm_button.set_sensitive(False)
+        self.abort_button = Gtk.Button(label='Abort')
+        self.abort_button.connect('clicked', lambda _foo: self.destroy())
+        self.bbox = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=10)
+        self.bbox.pack_start(self.confirm_button, True, True, 0)
+        self.bbox.pack_start(self.abort_button, True, True, 0)
+        self.vbox.pack_start(self.bbox, True, True, 0)
 
         self.add(self.vbox)
 
@@ -64,9 +77,19 @@ class PairingWindow(Gtk.Window):
         try:
             for user_input in self.noise.pairing_messages():
                 GLib.idle_add(update_text, user_input)
-            self.destroy()
-        except noise.ProtocolError as e:
-            GLib.idle_add(self.label.set_markup, f'<b>Error: {e}!</b>')
+
+            GLib.idle_add(self.finish_pairing)
+        except hexnoise.ProtocolError as e:
+            GLib.idle_add(self.label.set_markup, f'<b>Error: {e}</b>')
+
+    def finish_pairing(self):
+        self.label.set_markup(f'<b>Step 3</b>\n\nConfirm pairing.\n'
+                f'In case the device did not sound an alarm just now, confirm pairing now using the button below.')
+        self.confirm_button.set_sensitive(True)
+
+    def confirm_trust(self, _foo):
+        self.trusted = True
+        self.destroy()
 
 
 class StatusIcon(Gtk.StatusIcon):
@@ -75,12 +98,30 @@ class StatusIcon(Gtk.StatusIcon):
         self.set_tooltip_text('SecureHID connected')
         self.set_from_file('secureusb_icon.png')
 
+def run_pairing_gui(port, baudrate, debug=False):
+    XDG_CONFIG_HOME = os.environ.get('XDG_CONFIG_HOME') or os.path.join(os.path.expandvars('$HOME'), '.config', 'secure_hid')
+    if not os.path.isdir(XDG_CONFIG_HOME):
+        os.mkdir(XDG_CONFIG_HOME)
 
-def run_pairing_gui(serial, baudrate, debug=False):
-    ser = serial.Serial(serial, baudrate)
-    packetizer = hexnoise.Packetizer(serial, debug=debug)
-    noise = hexnoise.NoiseEngine(packetizer, debug=debug)
+    private_key_file = os.path.join(XDG_CONFIG_HOME, 'host_key.pem')
+    if not os.path.isfile(private_key_file):
+        with open(private_key_file, 'w') as f:
+            f.write(binascii.hexlify(hexnoise.NoiseEngine.generate_private_key_x25519()).decode())
+
+    known_devices_file = os.path.join(XDG_CONFIG_HOME, 'known_devices')
+    if not os.path.isfile(known_devices_file):
+        with open(known_devices_file, 'w') as f:
+            f.write('# This file contains the hex-encoded SHA-256 fingerprints of the X25519 keys of all trusted SecureHID devices\n')
+
+    with open(private_key_file) as f:
+        host_key_private = binascii.unhexlify(f.read())
+
+    ser = serial.Serial(port, baudrate)
+    packetizer = hexnoise.Packetizer(ser, debug=debug)
+    noise = hexnoise.NoiseEngine(host_key_private, packetizer, debug=debug)
     noise.perform_handshake()
+    print('Connected.')
+    print('Device fingerprint:', noise.remote_fingerprint)
 
     if not noise.paired:
         window = PairingWindow(noise, debug=debug)
@@ -88,12 +129,27 @@ def run_pairing_gui(serial, baudrate, debug=False):
         window.show_all()
         Gtk.main()
 
-    if self.noise.paired:
-        input_runner = threading.Thread(target=noise.uinput_passthrough, daemon=True)
-        input_runner.start()
+        if not window.trusted:
+            raise SystemError('User abort')
 
-        status_icon = StatusIcon()
-        Gtk.main()
+        if not noise.paired:
+            raise SystemError('Unknown noise error')
+
+        with open(known_devices_file, 'a') as f:
+            f.write(noise.remote_fingerprint)
+
+    else:
+        with open(known_devices_file) as f:
+            known_devices = [ l.strip() for l in f.readlines() if not l[0] == '#' ]
+
+        if noise.remote_fingerprint not in known_devices:
+            raise ValueError('Remote host is untrusted but seems to trust us.')
+
+    input_runner = threading.Thread(target=noise.uinput_passthrough, daemon=True)
+    input_runner.start()
+
+    status_icon = StatusIcon()
+    Gtk.main()
 
 if __name__ == '__main__':
     import argparse

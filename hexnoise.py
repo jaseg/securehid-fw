@@ -4,6 +4,8 @@ import time
 import enum
 import sys
 from contextlib import contextmanager, suppress, wraps
+import hashlib
+import secrets
 
 import serial
 from cobs import cobs
@@ -195,19 +197,32 @@ class Magic:
         '''.split()
 
 class NoiseEngine:
-    def __init__(self, packetizer, debug=False):
+    def __init__(self, host_key, packetizer, debug=False):
         self.debug = debug
         self.packetizer = packetizer
-        self.static_local = bytes([ # FIXME
-            0xbb, 0xdb, 0x4c, 0xdb, 0xd3, 0x09, 0xf1, 0xa1, 0xf2, 0xe1, 0x45, 0x69, 0x67, 0xfe, 0x28, 0x8c,
-            0xad, 0xd6, 0xf7, 0x12, 0xd6, 0x5d, 0xc7, 0xb7, 0x79, 0x3d, 0x5e, 0x63, 0xda, 0x6b, 0x37, 0x5b
-            ])
+        self.static_local = host_key
         self.proto = NoiseConnection.from_name(b'Noise_XX_25519_ChaChaPoly_BLAKE2s')
         self.proto.set_as_initiator()
         self.proto.set_keypair_from_private_bytes(Keypair.STATIC, self.static_local)
         self.proto.start_handshake()
+        self.handshake = self.proto.noise_protocol.handshake_state # save for later because someone didn't think
         self.paired = False
         self.connected = False
+
+    @property
+    def remote_fingerprint(self):
+        ''' Return the SHA-256 hash of the remote static key (rs). This can be used to fingerprint the remote party. '''
+        return hashlib.sha256(self.handshake.rs.public_bytes).hexdigest()
+
+    @classmethod
+    def generate_private_key_x25519(kls):
+        # This is taken from noise-c's reference implementation. This would not be needed had not cryptography/hazmat
+        # decided noone would ever need serialized x25519 private keys and noiseprotocol stopped just short of implementing
+        # key generation (who'd need that anyway, amiright?) -.-
+        key = list(secrets.token_bytes(32))
+        key[0] &= 0xF8
+        key[31] = (key[31] & 0x7F) | 0x40
+        return bytes(key)
 
     @wraps(print)
     def debug_print(self, *args, **kwargs):
@@ -306,6 +321,7 @@ class NoiseEngine:
                 yield user_input
 
             elif msg_type is ReportType.PAIRING_SUCCESS:
+                self.paired = True
                 break
 
             elif msg_type is ReportType.PAIRING_ERROR:

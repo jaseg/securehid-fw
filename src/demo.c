@@ -175,7 +175,6 @@ int pairing_check(struct NoiseState *st, const char *buf) {
 
         if (strncasecmp(p, "and", plen)) { /* ignore "and" */
             int num = -1;
-            /* FIXME ignore "and", ignore commata and dots */
             for (int i=0; i<256; i++) {
                 if ((!strncasecmp(p, adjectives[i], plen) && plen == strlen(adjectives[i]))
                  || (!strncasecmp(p, nouns[i],      plen) && plen == strlen(nouns[i]     ))) {
@@ -237,7 +236,7 @@ void pairing_input(uint8_t modbyte, uint8_t keycode) {
         case KEY_BACKSPACE:
             if (pairing_buf_pos > 0)
                 pairing_buf_pos--;
-            pairing_buf[pairing_buf_pos] = '\0'; /* FIXME debug */
+            pairing_buf[pairing_buf_pos] = '\0';
             ch = '\b';
             break;
 
@@ -250,7 +249,7 @@ void pairing_input(uint8_t modbyte, uint8_t keycode) {
 
                     if (pairing_buf_pos < sizeof(pairing_buf)-1) /* allow for terminating null byte */ {
                         pairing_buf[pairing_buf_pos++] = ch;
-                        pairing_buf[pairing_buf_pos] = '\0'; /* FIXME debug */
+                        pairing_buf[pairing_buf_pos] = '\0';
                     } else {
                         LOG_PRINTF("Pairing confirmation user input buffer full\n");
 
@@ -356,6 +355,42 @@ struct dma_usart_file debug_out_s = {
 };
 struct dma_usart_file *debug_out = &debug_out_s;
 
+/* FIXME start unsafe debug code */
+void usart1_isr(void) {
+    if (USART1_SR & USART_SR_ORE) { /* Overrun handling */
+        LOG_PRINTF("USART1 data register overrun\n");
+        /* Clear interrupt flag */
+        return (void)USART1_DR;
+    }
+
+    uint8_t data = USART1_DR; /* This automatically acknowledges the IRQ */
+    for (size_t i=0; keycode_mapping[i].kc != KEY_NONE; i++) {
+        struct hid_report report = {0};
+        if (keycode_mapping[i].ch[0] == data)
+            report.modifiers = 0;
+        else if (keycode_mapping[i].ch[1] == data)
+            report.modifiers = MOD_LSHIFT;
+        else continue;
+
+        report.keycodes[0] = keycode_mapping[i].kc;
+        pairing_parse_report(&report, 8);
+        break;
+    }
+    LOG_PRINTF(" %02x ", data);
+    if (data == 0x7f) {
+        struct hid_report report = {.modifiers=0, .keycodes={KEY_BACKSPACE, 0}};
+        pairing_parse_report(&report, 8);
+    } else if (data == '\r') {
+        struct hid_report report = {.modifiers=0, .keycodes={KEY_ENTER, 0}};
+        pairing_parse_report(&report, 8);
+        LOG_PRINTF("\n");
+    }
+
+    struct hid_report report = {0};
+    pairing_parse_report(&report, 8);
+}
+/* end unsafe debug code */
+
 void DMA_ISR(DEBUG_USART_DMA_NUM, DEBUG_USART_DMA_STREAM_NUM)(void) {
     TRACING_SET(TR_DEBUG_OUT_DMA_IRQ);
     if (dma_get_interrupt_flag(debug_out->dma, debug_out->stream, DMA_FEIF)) {
@@ -384,6 +419,11 @@ int main(void)
 
 #ifdef USART_DEBUG
     usart_dma_init(debug_out);
+    /* FIXME start unsafe debug code */
+    usart_enable_rx_interrupt(debug_out->usart);
+    nvic_enable_irq(NVIC_USART1_IRQ);
+    nvic_set_priority(NVIC_USART1_IRQ, 3<<4);
+    /* end unsafe debug code */
 #endif
 
     usart_dma_init(usart2_out);
