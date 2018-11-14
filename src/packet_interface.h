@@ -23,6 +23,7 @@ enum packet_types {
     REPORT_PAIRING_INPUT = 3,
     REPORT_PAIRING_SUCCESS = 4,
     REPORT_PAIRING_ERROR = 5,
+    REPORT_PAIRING_START = 6,
 };
 
 struct hid_report_packet {

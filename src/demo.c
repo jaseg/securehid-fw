@@ -61,8 +61,8 @@ static uint8_t remote_key_reference[CURVE25519_KEY_LEN];
 
 void _fini(void);
 
-static inline void delay_ms_busy_loop(uint32_t ms) {
-	for (volatile uint32_t i = 0; i < 14903*ms; i++);
+static inline void delay(uint32_t n) {
+	for (volatile uint32_t i = 0; i < 1490*n; i++);
 }
 
 
@@ -414,10 +414,16 @@ int main(void)
     if (generate_identity_key(&noise_state))
         LOG_PRINTF("Error generating identiy key\n");
 
+    int poll_ctr = 0;
 	while (23) {
-        TRACING_SET(TR_USBH_POLL);
-		usbh_poll(tim6_get_time_us());
-        TRACING_CLEAR(TR_USBH_POLL);
+        delay(1);
+
+        if (++poll_ctr == 10) {
+            poll_ctr = 0;
+            TRACING_SET(TR_USBH_POLL);
+            usbh_poll(tim6_get_time_us());
+            TRACING_CLEAR(TR_USBH_POLL);
+        }
 
         TRACING_SET(TR_HOST_PKT_HANDLER);
         if (host_packet_length > 0) {

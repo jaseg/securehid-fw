@@ -147,9 +147,18 @@ int try_continue_noise_handshake(struct NoiseState *st, uint8_t *buf, size_t len
         HANDLE_NOISE_ERROR(noise_dhstate_get_public_key(remote_dh, st->remote_key, sizeof(st->remote_key)), "getting remote pubkey");
 
         if (!memcmp(st->remote_key, st->remote_key_reference, sizeof(st->remote_key))) { /* keys match */
+            uint8_t response = REPORT_PAIRING_SUCCESS;
+            if (send_encrypted_message(st, &response, sizeof(response)))
+                LOG_PRINTF("Error sending pairing response packet\n");
+
             uninit_handshake(st, HANDSHAKE_DONE_KNOWN_HOST);
             st->failed_handshakes = 0;
+
         } else { /* keys don't match */
+            uint8_t response = REPORT_PAIRING_START;
+            if (send_encrypted_message(st, &response, sizeof(response)))
+                LOG_PRINTF("Error sending pairing response packet\n");
+
             uninit_handshake(st, HANDSHAKE_DONE_UNKNOWN_HOST);
             st->failed_handshakes++;
         }

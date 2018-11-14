@@ -28,8 +28,9 @@ class ReportType(enum.Enum):
     KEYBOARD = 1
     MOUSE = 2
     PAIRING_INPUT = 3
-    PAIRING_SUCESS = 4
+    PAIRING_SUCCESS = 4
     PAIRING_ERROR = 5
+    PAIRING_START = 6
 
 class ProtocolError(Exception):
     pass
@@ -205,6 +206,8 @@ class NoiseEngine:
         self.proto.set_as_initiator()
         self.proto.set_keypair_from_private_bytes(Keypair.STATIC, self.static_local)
         self.proto.start_handshake()
+        self.paired = False
+        self.connected = False
         self.packetizer.send_packet(PacketType.INITIATE_HANDSHAKE, b'')
         self.debug_print('Handshake started')
 
@@ -226,6 +229,17 @@ class NoiseEngine:
                 self.proto.read_message(payload)
             else:
                 raise ProtocolError(f'Incorrect packet type {pkt_type}. Ignoring since this is only test code.')
+
+        msg_type, payload = self.packetizer.receive_packet()
+        rtype, data = self._decrypt(payload)
+        if rtype is ReportType.PAIRING_SUCCESS:
+            self.connected, self.paired = True, True
+        elif rtype is ReportType.PAIRING_START:
+            self.connected, self.paired = True, False
+        else:
+            self.connected, self.paired = True, False
+            raise UserWarning(f'Unexpected record type {rtype} in {msg_type} packet. Ignoring.')
+
         if self.debug:
             print('Handshake finished, handshake hash:')
             hexdump(print, self.proto.get_handshake_hash())
@@ -282,7 +296,7 @@ class NoiseEngine:
     def pairing_messages(self):
         user_input = ''
         for msg_type, payload in self.receive_loop():
-            if msg_type == ReportType.PAIRING_INPUT:
+            if msg_type is ReportType.PAIRING_INPUT:
                 ch = chr(payload[0])
                 if ch == '\b':
                     user_input = user_input[:-1]
@@ -290,10 +304,10 @@ class NoiseEngine:
                     user_input += ch
                 yield user_input
 
-            elif msg_type == ReportType.PAIRING_SUCESS:
+            elif msg_type is ReportType.PAIRING_SUCCESS:
                 break
 
-            elif msg_type == ReportType.PAIRING_ERROR:
+            elif msg_type is ReportType.PAIRING_ERROR:
                 raise ProtocolError('Device-side pairing error') # FIXME find better exception subclass here
 
             else:
@@ -313,7 +327,6 @@ class NoiseEngine:
                     keys = { *KeyMapper.map_modifiers(modbyte), *KeyMapper.map_regulars(keycodes) }
                     if self.debug:
                         print('Emitting:', keys)
-                    print('payload:', binascii.hexlify(payload), 'emitting:', keys)
 
                     for key in keys - old_kcs:
                         ui.emit(key, 1, syn=False)

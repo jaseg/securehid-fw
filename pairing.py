@@ -49,27 +49,29 @@ class PairingWindow(Gtk.Window):
     def run_handshake(self):
         self.noise.perform_handshake()
 
-        binding_incantation = self.noise.channel_binding_incantation()
-        self.label.set_markup(f'<b>Step 2</b>\n\nPerform channel binding ritual.\n'
-                              f'Enter the following incantation, then press enter.\n'
-                              f'<b>{binding_incantation}</b>')
-        
-        def update_text(text):
-            self.entry.set_text(text)
-            self.entry.set_position(len(text))
+        if not self.noise.paired:
+            binding_incantation = self.noise.channel_binding_incantation()
+            GLib.idle_add(self.label.set_markup,
+                    f'<b>Step 2</b>\n\nPerform channel binding ritual.\n'
+                    f'Enter the following incantation, then press enter.\n'
+                    f'<b>{binding_incantation}</b>')
+            
+            def update_text(text):
+                self.entry.set_text(text)
+                self.entry.set_position(len(text))
 
-            clean = lambda s: re.sub('[^a-z0-9-]', '', s.lower())
-            if clean(binding_incantation).startswith(clean(text)):
-                color = 0.9, 1.0, 0.9 # light red
-            else:
-                color = 1.0, 0.9, 0.9 # light green
-            self.entry.override_background_color(Gtk.StateType.NORMAL, Gdk.RGBA(*color, 1.0))
+                clean = lambda s: re.sub('[^a-z0-9-]', '', s.lower())
+                if clean(binding_incantation).startswith(clean(text)):
+                    color = 0.9, 1.0, 0.9 # light red
+                else:
+                    color = 1.0, 0.9, 0.9 # light green
+                self.entry.override_background_color(Gtk.StateType.NORMAL, Gdk.RGBA(*color, 1.0))
 
-        for user_input in self.noise.pairing_messages():
-            print(f'User input: "{user_input}"')
-            GLib.idle_add(update_text, user_input)
+            for user_input in self.noise.pairing_messages():
+                print(f'User input: "{user_input}"')
+                GLib.idle_add(update_text, user_input)
 
-        self.label.set_markup(f'<b>Done!</b>')
+        GLib.idle_add(self.label.set_markup, f'<b>Done!</b>')
 
         # FIXME demo
         self.noise.uinput_passthrough()
