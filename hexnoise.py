@@ -208,8 +208,6 @@ class NoiseEngine:
         self.proto.start_handshake()
         self.paired = False
         self.connected = False
-        self.packetizer.send_packet(PacketType.INITIATE_HANDSHAKE, b'')
-        self.debug_print('Handshake started')
 
     @wraps(print)
     def debug_print(self, *args, **kwargs):
@@ -217,6 +215,9 @@ class NoiseEngine:
             print(*args, **kwargs)
 
     def perform_handshake(self):
+        self.packetizer.send_packet(PacketType.INITIATE_HANDSHAKE, b'')
+        self.debug_print('Handshake started')
+
         while True:
             if self.proto.handshake_finished:
                 break
