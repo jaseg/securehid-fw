@@ -30,7 +30,7 @@ struct NoiseState {
     NoiseHandshakeState *handshake;
     enum handshake_state handshake_state;
     NoiseCipherState *tx_cipher, *rx_cipher;
-    uint8_t local_key[CURVE25519_KEY_LEN];
+    uint8_t *local_key;
     uint8_t remote_key[CURVE25519_KEY_LEN];
     uint8_t *remote_key_reference;
     uint8_t handshake_hash[BLAKE2S_HASH_SIZE];
@@ -39,7 +39,7 @@ struct NoiseState {
 
 
 void uninit_handshake(struct NoiseState *st, enum handshake_state new_state);
-void noise_state_init(struct NoiseState *st, uint8_t *remote_key_reference);
+void noise_state_init(struct NoiseState *st, uint8_t *remote_key_reference, uint8_t *local_key);
 void persist_remote_key(struct NoiseState *st);
 int start_protocol_handshake(struct NoiseState *st);
 int reset_protocol_handshake(struct NoiseState *st);

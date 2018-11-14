@@ -33,6 +33,17 @@ MEMORY
 /* Include the common ld script. */
 INCLUDE libopencm3_stm32f4.ld
 
+/* Extra stuff */
+SECTIONS
+{
+    .backup_sram : {
+        . = ALIGN(4);
+        __backup_sram_start = .;
+        *(.backup_sram)
+        __backup_sram_end = .;
+    } >backup
+}
+
 PROVIDE(_ram_start = ORIGIN(ram));
 PROVIDE(_ram_end = ORIGIN(ram) + LENGTH(ram));
 PROVIDE(_rom_start = ORIGIN(rom));

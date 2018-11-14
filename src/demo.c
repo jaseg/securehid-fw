@@ -38,6 +38,7 @@
 #include <libopencm3/stm32/timer.h>
 #include <libopencm3/stm32/otg_hs.h>
 #include <libopencm3/stm32/otg_fs.h>
+#include <libopencm3/stm32/pwr.h>
 #include <libopencm3/stm32/dma.h>
 #include <libopencm3/cm3/nvic.h>
 #include <libopencmsis/core_cm3.h>
@@ -56,7 +57,9 @@
 
 
 static struct NoiseState noise_state;
-static uint8_t remote_key_reference[CURVE25519_KEY_LEN];
+static uint8_t remote_key_reference[BLAKE2S_HASH_SIZE] __attribute__((section(".backup_sram")));
+static uint8_t local_key[CURVE25519_KEY_LEN] __attribute__((section(".backup_sram")));
+static uint8_t identity_key_valid __attribute__((section(".backup_sram"))) = 0;
 
 
 void _fini(void);
@@ -80,6 +83,9 @@ static void clock_setup(void) {
 	rcc_periph_clock_enable(RCC_TIM6);
 	rcc_periph_clock_enable(RCC_DMA2);
 	rcc_periph_clock_enable(RCC_DMA1);
+
+	rcc_periph_clock_enable(RCC_PWR);
+	rcc_periph_clock_enable(RCC_BKPSRAM);
 
 	rcc_periph_clock_enable(RCC_RNG);
 }
@@ -413,6 +419,8 @@ int main(void)
 {
 	clock_setup();
 	gpio_setup();
+    pwr_disable_backup_domain_write_protect();
+    PWR_CSR |= PWR_CSR_BRE; /* Enable backup SRAM battery power regulator */
 
 	/* provides time_curr_us to usbh_poll function */
 	tim6_setup();
@@ -447,12 +455,17 @@ int main(void)
 	LOG_PRINTF("Initializing RNG...\n");
     rand_init();
 
-    noise_state_init(&noise_state, remote_key_reference);
+    noise_state_init(&noise_state, remote_key_reference, local_key);
     /* FIXME load remote key from backup memory */
     /* FIXME only run this on first boot and persist key in backup sram. Allow reset via jumper-triggered factory reset function. */
-    LOG_PRINTF("Generating identity key...\n");
-    if (generate_identity_key(&noise_state))
-        LOG_PRINTF("Error generating identiy key\n");
+    if (!identity_key_valid) {
+        LOG_PRINTF("Generating identity key...\n");
+        if (generate_identity_key(&noise_state)) {
+            LOG_PRINTF("Error generating identiy key\n");
+        } else {
+            identity_key_valid = 1;
+        }
+    }
 
     int poll_ctr = 0;
 	while (23) {

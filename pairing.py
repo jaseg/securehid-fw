@@ -3,6 +3,7 @@ import threading
 import binascii
 import re
 import os
+import time
 
 import serial
 import gi
@@ -136,11 +137,11 @@ def run_pairing_gui(port, baudrate, debug=False):
             raise SystemError('Unknown noise error')
 
         with open(known_devices_file, 'a') as f:
-            f.write(noise.remote_fingerprint)
+            f.write(f'{noise.remote_fingerprint} # added {time.ctime()}\n')
 
     else:
         with open(known_devices_file) as f:
-            known_devices = [ l.strip() for l in f.readlines() if not l[0] == '#' ]
+            known_devices = [ l.strip().partition('#')[0].strip() for l in f.readlines() if not l[0] == '#' ]
 
         if noise.remote_fingerprint not in known_devices:
             raise ValueError('Remote host is untrusted but seems to trust us.')

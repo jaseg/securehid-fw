@@ -3,6 +3,9 @@
 
 #include "noise.h"
 #include "packet_interface.h"
+#include "rand_stm32.h"
+
+#include "crypto/noise-c/src/crypto/blake2/blake2s.h"
 
 
 #define HANDLE_NOISE_ERROR(x, msg) do { \
@@ -20,12 +23,13 @@ volatile uint8_t host_packet_buf[MAX_HOST_PACKET_SIZE];
 volatile int host_packet_length = 0;
 
 
-void noise_state_init(struct NoiseState *st, uint8_t *remote_key_reference) {
+void noise_state_init(struct NoiseState *st, uint8_t *remote_key_reference, uint8_t *local_key) {
     st->handshake_state = HANDSHAKE_UNINITIALIZED;
     st->handshake = NULL;
     st->tx_cipher = NULL;
     st->rx_cipher = NULL;
     st->remote_key_reference = remote_key_reference;
+    st->local_key = local_key;
     st->failed_handshakes = 0;
 }
 
@@ -51,7 +55,7 @@ int start_protocol_handshake(struct NoiseState *st) {
     HANDLE_NOISE_ERROR(noise_handshakestate_new_by_name(&handshake, "Noise_XX_25519_ChaChaPoly_BLAKE2s", NOISE_ROLE_RESPONDER), "instantiating handshake pattern");
 
     NoiseDHState *dh = noise_handshakestate_get_local_keypair_dh(handshake);
-    HANDLE_NOISE_ERROR(noise_dhstate_set_keypair_private(dh, st->local_key, sizeof(st->local_key)), "loading local private keys");
+    HANDLE_NOISE_ERROR(noise_dhstate_set_keypair_private(dh, st->local_key, CURVE25519_KEY_LEN), "loading local private keys");
 
     HANDLE_NOISE_ERROR(noise_handshakestate_start(handshake), "starting handshake");
 
@@ -74,7 +78,7 @@ int generate_identity_key(struct NoiseState *st) {
     uint8_t unused[CURVE25519_KEY_LEN]; /* the noise api is a bit bad here. */
     memset(st->local_key, 0, sizeof(st->local_key));
 
-    HANDLE_NOISE_ERROR(noise_dhstate_get_keypair(dh, st->local_key, sizeof(st->local_key), unused, sizeof(unused)), "saving key pair");
+    HANDLE_NOISE_ERROR(noise_dhstate_get_keypair(dh, st->local_key, CURVE25519_KEY_LEN, unused, sizeof(unused)), "saving key pair");
 
     return 0;
 errout:
@@ -146,7 +150,14 @@ int try_continue_noise_handshake(struct NoiseState *st, uint8_t *buf, size_t len
 
         HANDLE_NOISE_ERROR(noise_dhstate_get_public_key(remote_dh, st->remote_key, sizeof(st->remote_key)), "getting remote pubkey");
 
-        if (!memcmp(st->remote_key, st->remote_key_reference, sizeof(st->remote_key))) { /* keys match */
+        /* TODO support list of known remote hosts here instead of just one */
+        uint8_t remote_fp[BLAKE2S_HASH_SIZE];
+        BLAKE2s_context_t bc;
+        BLAKE2s_reset(&bc);
+        BLAKE2s_update(&bc, st->remote_key, sizeof(st->remote_key));
+        BLAKE2s_finish(&bc, remote_fp);
+
+        if (!memcmp(remote_fp, st->remote_key_reference, sizeof(remote_fp))) { /* keys match */
             uint8_t response = REPORT_PAIRING_SUCCESS;
             if (send_encrypted_message(st, &response, sizeof(response)))
                 LOG_PRINTF("Error sending pairing response packet\n");
@@ -177,7 +188,10 @@ errout:
 }
 
 void persist_remote_key(struct NoiseState *st) {
-    memcpy(st->remote_key_reference, st->remote_key, sizeof(st->remote_key));
+    BLAKE2s_context_t bc;
+    BLAKE2s_reset(&bc);
+    BLAKE2s_update(&bc, st->remote_key, sizeof(st->remote_key));
+    BLAKE2s_finish(&bc, st->remote_key_reference);
     st->handshake_state = HANDSHAKE_DONE_KNOWN_HOST;
 }
 
