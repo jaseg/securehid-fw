@@ -28,6 +28,7 @@ void noise_state_init(struct NoiseState *st, uint8_t *remote_key_reference, uint
     st->handshake = NULL;
     st->tx_cipher = NULL;
     st->rx_cipher = NULL;
+    memset(st->handshake_hash, 0, sizeof(st->handshake_hash));
     st->remote_key_reference = remote_key_reference;
     st->local_key = local_key;
     st->failed_handshakes = 0;
@@ -35,6 +36,11 @@ void noise_state_init(struct NoiseState *st, uint8_t *remote_key_reference, uint
 
 int reset_protocol_handshake(struct NoiseState *st) {
     uninit_handshake(st, HANDSHAKE_UNINITIALIZED);
+    noise_cipherstate_free(st->tx_cipher);
+    noise_cipherstate_free(st->rx_cipher);
+    st->tx_cipher = NULL;
+    st->rx_cipher = NULL;
+    memset(st->handshake_hash, 0, sizeof(st->handshake_hash));
     return start_protocol_handshake(st);
 }
 
@@ -76,7 +82,7 @@ int generate_identity_key(struct NoiseState *st) {
     HANDLE_NOISE_ERROR(noise_dhstate_generate_keypair(dh), "generating key pair");
 
     uint8_t unused[CURVE25519_KEY_LEN]; /* the noise api is a bit bad here. */
-    memset(st->local_key, 0, sizeof(st->local_key));
+    memset(st->local_key, 0, sizeof(*st->local_key));
 
     HANDLE_NOISE_ERROR(noise_dhstate_get_keypair(dh, st->local_key, CURVE25519_KEY_LEN, unused, sizeof(unused)), "saving key pair");
 
