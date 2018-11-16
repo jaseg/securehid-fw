@@ -36,6 +36,7 @@ void noise_state_init(struct NoiseState *st, uint8_t *remote_key_reference, uint
 
 int reset_protocol_handshake(struct NoiseState *st) {
     uninit_handshake(st, HANDSHAKE_UNINITIALIZED);
+    disarm_key_scrubber();
     noise_cipherstate_free(st->tx_cipher);
     noise_cipherstate_free(st->rx_cipher);
     st->tx_cipher = NULL;
@@ -98,6 +99,7 @@ void uninit_handshake(struct NoiseState *st, enum handshake_state new_state) {
         noise_handshakestate_free(st->handshake);
     st->handshake_state = new_state;
     st->handshake = NULL;
+    arm_key_scrubber();
 }
 
 int try_continue_noise_handshake(struct NoiseState *st, uint8_t *buf, size_t len) {

@@ -32,6 +32,8 @@
 #include "words.h"
 #include "tracing.h"
 
+#include "crypto/noise-c/src/protocol/internal.h"
+
 #include <libopencm3/stm32/rcc.h>
 #include <libopencm3/stm32/gpio.h>
 #include <libopencm3/stm32/usart.h>
@@ -55,11 +57,25 @@
 #define MAX_FAILED_HANDSHAKES 5
 #endif
 
-
 static struct NoiseState noise_state;
-static uint8_t remote_key_reference[BLAKE2S_HASH_SIZE] __attribute__((section(".backup_sram")));
-static uint8_t local_key[CURVE25519_KEY_LEN] __attribute__((section(".backup_sram")));
-static uint8_t identity_key_valid __attribute__((section(".backup_sram"))) = 0;
+static struct {
+    union {
+        struct {
+            uint8_t local_key[CURVE25519_KEY_LEN];
+            uint8_t remote_key_reference[BLAKE2S_HASH_SIZE];
+        };
+        uint32_t all_keys[0];
+    } keys;
+    struct {
+        uint8_t identity_key_valid;
+        uint8_t scrub_backup;
+        uint8_t scrubber_armed;
+        uint32_t old_scrub_pattern;
+        uint32_t new_scrub_pattern;
+        int scrub_idx_read;
+        int scrub_idx_done;
+    } mgmt __attribute__((aligned(4)));
+} keystore __attribute__((section(".backup_sram"))) = {0};
 
 
 void _fini(void);
@@ -90,13 +106,58 @@ static void clock_setup(void) {
 	rcc_periph_clock_enable(RCC_RNG);
 }
 
+void arm_key_scrubber() {
+    keystore.mgmt.scrubber_armed = 1;
+}
+
+static void finish_scrub(int start_index, uint32_t pattern);
+static void finish_interrupted_scrub(void);
+
+void disarm_key_scrubber() {
+    keystore.mgmt.scrubber_armed = 0;
+    keystore.mgmt.old_scrub_pattern = keystore.mgmt.new_scrub_pattern;
+    keystore.mgmt.new_scrub_pattern = 0x00000000;
+    finish_scrub(0, keystore.mgmt.old_scrub_pattern);
+}
+
+static void finish_scrub(int start_index, uint32_t pattern) {
+    for (size_t i=start_index; i<sizeof(keystore.keys)/sizeof(keystore.keys.all_keys[0]); i++) {
+        keystore.mgmt.scrub_backup = keystore.keys.all_keys[i];
+        keystore.mgmt.scrub_idx_read = i;
+        keystore.keys.all_keys[i] ^= pattern;
+        keystore.mgmt.scrub_idx_done = i;
+    }
+}
+
+static void finish_interrupted_scrub(void) {
+    if (keystore.mgmt.scrub_idx_read != keystore.mgmt.scrub_idx_done)
+        keystore.keys.all_keys[keystore.mgmt.scrub_idx_read] = keystore.mgmt.scrub_backup;
+
+    finish_scrub(keystore.mgmt.scrub_idx_done, keystore.mgmt.old_scrub_pattern ^ keystore.mgmt.new_scrub_pattern);
+}
 
 /* setup 10kHz timer */
 static void tim6_setup(void) {
 	timer_reset(TIM6);
 	timer_set_prescaler(TIM6, 8400 - 1);	// 84Mhz/10kHz - 1
 	timer_set_period(TIM6, 65535);			// Overflow in ~6.5 seconds
+    timer_enable_irq(TIM6, TIM_DIER_UIE);
+    nvic_enable_irq(NVIC_TIM6_DAC_IRQ);
+    nvic_set_priority(NVIC_TIM6_DAC_IRQ, 15<<4); /* really low priority */
 	timer_enable_counter(TIM6);
+}
+
+void tim6_dac_isr(void) {
+    /* Runs every ~6.5s on timer overrun */
+    timer_clear_flag(TIM6, TIM_SR_UIF);
+
+    if (!keystore.mgmt.scrubber_armed)
+        return;
+
+    keystore.mgmt.old_scrub_pattern = keystore.mgmt.new_scrub_pattern;
+    noise_rand_bytes(&keystore.mgmt.new_scrub_pattern, sizeof(keystore.mgmt.new_scrub_pattern));
+    LOG_PRINTF("Scrubbing keys using pattern %08x\n", keystore.mgmt.new_scrub_pattern);
+    finish_scrub(0, keystore.mgmt.old_scrub_pattern ^ keystore.mgmt.new_scrub_pattern);
 }
 
 static uint32_t tim6_get_time_us(void)
@@ -422,7 +483,8 @@ int main(void)
     pwr_disable_backup_domain_write_protect();
     PWR_CSR |= PWR_CSR_BRE; /* Enable backup SRAM battery power regulator */
 
-	/* provides time_curr_us to usbh_poll function */
+    finish_interrupted_scrub();
+    disarm_key_scrubber();
 	tim6_setup();
 
 #ifdef USART_DEBUG
@@ -455,15 +517,15 @@ int main(void)
 	LOG_PRINTF("Initializing RNG...\n");
     rand_init();
 
-    noise_state_init(&noise_state, remote_key_reference, local_key);
+    noise_state_init(&noise_state, keystore.keys.remote_key_reference, keystore.keys.local_key);
     /* FIXME load remote key from backup memory */
     /* FIXME only run this on first boot and persist key in backup sram. Allow reset via jumper-triggered factory reset function. */
-    if (!identity_key_valid) {
+    if (!keystore.mgmt.identity_key_valid) {
         LOG_PRINTF("Generating identity key...\n");
         if (generate_identity_key(&noise_state)) {
             LOG_PRINTF("Error generating identiy key\n");
         } else {
-            identity_key_valid = 1;
+            keystore.mgmt.identity_key_valid = 1;
         }
     }
 

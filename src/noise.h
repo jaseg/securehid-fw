@@ -47,4 +47,7 @@ int generate_identity_key(struct NoiseState *st);
 int try_continue_noise_handshake(struct NoiseState *st, uint8_t *buf, size_t len);
 int send_encrypted_message(struct NoiseState *st, uint8_t *msg, size_t len);
 
+void arm_key_scrubber(void);
+void disarm_key_scrubber(void);
+
 #endif
