@@ -243,8 +243,8 @@ int pairing_check(struct NoiseState *st, const char *buf) {
         if (strncasecmp(p, "and", plen)) { /* ignore "and" */
             int num = -1;
             for (int i=0; i<256; i++) {
-                if ((!strncasecmp(p, adjectives[i], plen) && plen == strlen(adjectives[i]))
-                 || (!strncasecmp(p, nouns[i],      plen) && plen == strlen(nouns[i]     ))) {
+                if ((!strncasecmp(p, even[i], plen) && plen == strlen(even[i]))
+                 || (!strncasecmp(p, odd[i],      plen) && plen == strlen(odd[i]     ))) {
                     //LOG_PRINTF("    idx=%02d h=%02x i=%02x adj=%s n=%s plen=%d s=%s\n", idx, st->handshake_hash[idx], i, adjectives[i], nouns[i], plen, p);
                     num = i;
                     break;

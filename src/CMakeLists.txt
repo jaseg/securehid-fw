@@ -24,8 +24,7 @@ add_library (usbhost
     cobs.c
     noise.c
     packet_interface.c
-    adjectives.c
-    nouns.c
+    words.c
     hid_keycodes.c
 )
 
