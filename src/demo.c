@@ -90,6 +90,7 @@ static void clock_setup(void) {
 	rcc_clock_setup_hse_3v3(&hse_8mhz_3v3[CLOCK_3V3_168MHZ]);
 
 	rcc_periph_clock_enable(RCC_GPIOA);
+	rcc_periph_clock_enable(RCC_GPIOB);
 	rcc_periph_clock_enable(RCC_GPIOD);
 	rcc_periph_clock_enable(RCC_GPIOE);
 
@@ -176,8 +177,19 @@ static void gpio_setup(void)
 	gpio_mode_setup(GPIOD, GPIO_MODE_OUTPUT, GPIO_PUPD_NONE, 0xffff);
 
     /* D2, D3 LEDs */
+	//gpio_mode_setup(GPIOA, GPIO_MODE_OUTPUT, GPIO_PUPD_NONE, GPIO6 | GPIO7);
+	//gpio_set(GPIOA, GPIO6 | GPIO7);
+
+    /* Status LEDs (PE4-15) */
+	gpio_mode_setup(GPIOE, GPIO_MODE_INPUT, GPIO_PUPD_NONE, 0xfff0);
+
+    /* Alarm LEDs (PA6,7) */
 	gpio_mode_setup(GPIOA, GPIO_MODE_OUTPUT, GPIO_PUPD_NONE, GPIO6 | GPIO7);
 	gpio_set(GPIOA, GPIO6 | GPIO7);
+    
+    /* Speaker */
+	gpio_mode_setup(GPIOB, GPIO_MODE_OUTPUT, GPIO_PUPD_NONE, GPIO10);
+	gpio_set(GPIOB, GPIO10);
 
     /* USB OTG FS phy outputs */
 	gpio_mode_setup(GPIOA, GPIO_MODE_AF, GPIO_PUPD_NONE, GPIO11 | GPIO12);
@@ -192,7 +204,7 @@ static void gpio_setup(void)
 	gpio_set_af(GPIOA, GPIO_AF7, GPIO2 | GPIO3);
 
     /* K0 (PE4)/K1 (PE3) buttons */
-	gpio_mode_setup(GPIOE, GPIO_MODE_INPUT, GPIO_PUPD_PULLUP, GPIO3 | GPIO4);
+	//gpio_mode_setup(GPIOE, GPIO_MODE_INPUT, GPIO_PUPD_PULLUP, GPIO3 | GPIO4);
 }
 
 struct hid_report {
@@ -475,6 +487,42 @@ void DMA_ISR(DEBUG_USART_DMA_NUM, DEBUG_USART_DMA_STREAM_NUM)(void) {
     TRACING_CLEAR(TR_DEBUG_OUT_DMA_IRQ);
 }
 
+void handle_host_packet(struct control_packet *pkt, size_t payload_length) {
+    TRACING_SET(TR_HOST_PKT_HANDLER);
+    if (pkt->type == HOST_INITIATE_HANDSHAKE) {
+        /* It is important that we acknowledge this command right away. Starting the handshake involves key
+         * generation which takes a few milliseconds. If we'd acknowledge this later, we might run into an
+         * overrun here since we would be blocking the buffer during key generation. */
+
+        if (payload_length > 0) {
+            LOG_PRINTF("Extraneous data in INITIATE_HANDSHAKE message\n");
+        } else if (noise_state.failed_handshakes < MAX_FAILED_HANDSHAKES) {
+            LOG_PRINTF("Starting noise protocol handshake...\n");
+            if (reset_protocol_handshake(&noise_state))
+                LOG_PRINTF("Error starting protocol handshake.\n");
+            pairing_buf_pos = 0; /* Reset channel binding keyboard input buffer */
+        } else {
+            LOG_PRINTF("Too many failed handshake attempts, not starting another one\n");
+            struct control_packet out = { .type=HOST_TOO_MANY_FAILS };
+            send_packet(usart2_out, (uint8_t *)&out, sizeof(out));
+        }
+
+    } else if (pkt->type == HOST_HANDSHAKE) {
+        LOG_PRINTF("Handling handshake packet of length %d\n", payload_length);
+        TRACING_SET(TR_NOISE_HANDSHAKE);
+        if (try_continue_noise_handshake(&noise_state, pkt->payload, payload_length)) {
+            TRACING_CLEAR(TR_NOISE_HANDSHAKE);
+            LOG_PRINTF("Reporting handshake error to host\n");
+            struct control_packet out = { .type=HOST_CRYPTO_ERROR };
+            send_packet(usart2_out, (uint8_t *)&out, sizeof(out));
+        } else TRACING_CLEAR(TR_NOISE_HANDSHAKE);
+
+    } else {
+        LOG_PRINTF("Unhandled packet of type %d\n", pkt->type);
+    }
+    TRACING_CLEAR(TR_HOST_PKT_HANDLER);
+}
+
 
 int main(void)
 {
@@ -530,8 +578,52 @@ int main(void)
     }
 
     int poll_ctr = 0;
+    int led_ctr = 0;
+    int led_idx = 0;
+    int spk_ctr = 0;
+    int spk_ctr2 = 0;
+    int spk_adv = 0;
+    int spk_inc = 1;
+    gpio_clear(GPIOA, GPIO6);
+    gpio_clear(GPIOA, GPIO7);
+    gpio_clear(GPIOB, GPIO10);
 	while (23) {
         delay(1);
+
+        led_ctr++;
+        if (led_ctr == 10) {
+            gpio_clear(GPIOA, GPIO6);
+            gpio_clear(GPIOA, GPIO7);
+        } else if (led_ctr == 300) {
+            gpio_mode_setup(GPIOE, GPIO_MODE_INPUT, GPIO_PUPD_NONE, 0xfff0);
+        } else if (led_ctr == 400) {
+            if (++led_idx == 12)
+                led_idx = 0;
+            gpio_mode_setup(GPIOE, GPIO_MODE_OUTPUT, GPIO_PUPD_NONE, 1<<(4+led_idx));
+            gpio_clear(GPIOE, 0xfff0);
+            if (led_idx & 1)
+                gpio_set(GPIOA, GPIO6);
+            else
+                gpio_set(GPIOA, GPIO7);
+            led_ctr = 0;
+        }
+
+        spk_ctr++;
+        spk_ctr2++;
+        if (spk_ctr2 == 100) {
+            spk_adv += spk_inc;
+            if (spk_adv > 31)
+                spk_inc = -3;
+            if (spk_adv < 1)
+                spk_inc = 1;
+            spk_ctr2 = 0;
+        }
+        if (spk_ctr%spk_adv == 0) {
+            gpio_set(GPIOB, GPIO10);
+        } else {
+            gpio_clear(GPIOB, GPIO10);
+        }
+        continue;
 
         if (++poll_ctr == 10) {
             poll_ctr = 0;
@@ -540,44 +632,9 @@ int main(void)
             TRACING_CLEAR(TR_USBH_POLL);
         }
 
-        TRACING_SET(TR_HOST_PKT_HANDLER);
         if (host_packet_length > 0) {
-            struct control_packet *pkt = (struct control_packet *)host_packet_buf;
-            size_t payload_length = host_packet_length - 1;
-
-            if (pkt->type == HOST_INITIATE_HANDSHAKE) {
-                /* It is important that we acknowledge this command right away. Starting the handshake involves key
-                 * generation which takes a few milliseconds. If we'd acknowledge this later, we might run into an
-                 * overrun here since we would be blocking the buffer during key generation. */
-                host_packet_length = 0; /* Acknowledge to USART ISR the buffer has been handled */
-
-                if (payload_length > 0) {
-                    LOG_PRINTF("Extraneous data in INITIATE_HANDSHAKE message\n");
-                } else if (noise_state.failed_handshakes < MAX_FAILED_HANDSHAKES) {
-                    LOG_PRINTF("Starting noise protocol handshake...\n");
-                    if (reset_protocol_handshake(&noise_state))
-                        LOG_PRINTF("Error starting protocol handshake.\n");
-                    pairing_buf_pos = 0; /* Reset channel binding keyboard input buffer */
-                } else {
-                    LOG_PRINTF("Too many failed handshake attempts, not starting another one\n");
-                    struct control_packet out = { .type=HOST_TOO_MANY_FAILS };
-                    send_packet(usart2_out, (uint8_t *)&out, sizeof(out));
-                }
-            } else if (pkt->type == HOST_HANDSHAKE) {
-                LOG_PRINTF("Handling handshake packet of length %d\n", payload_length);
-                TRACING_SET(TR_NOISE_HANDSHAKE);
-                if (try_continue_noise_handshake(&noise_state, pkt->payload, payload_length)) {
-                    TRACING_CLEAR(TR_NOISE_HANDSHAKE);
-                    LOG_PRINTF("Reporting handshake error to host\n");
-                    struct control_packet out = { .type=HOST_CRYPTO_ERROR };
-                    send_packet(usart2_out, (uint8_t *)&out, sizeof(out));
-                } else TRACING_CLEAR(TR_NOISE_HANDSHAKE);
-                host_packet_length = 0; /* Acknowledge to USART ISR the buffer has been handled */
-
-            } else {
-                LOG_PRINTF("Unhandled packet of type %d\n", pkt->type);
-                host_packet_length = 0; /* Acknowledge to USART ISR the buffer has been handled */
-            }
+            handle_host_packet((struct control_packet *)host_packet_buf, host_packet_length - 1);
+            host_packet_length = 0; /* Acknowledge to USART ISR the buffer has been handled */
 
         } else if (host_packet_length < 0) { /* USART error */
             host_packet_length = 0; /* Acknowledge to USART ISR the error has been handled */
@@ -593,7 +650,6 @@ int main(void)
                 pairing_buf_pos = 0; /* Reset channel binding keyboard input buffer */
             }
         }
-        TRACING_CLEAR(TR_HOST_PKT_HANDLER);
 
         if (noise_state.handshake_state == HANDSHAKE_IN_PROGRESS) {
             TRACING_SET(TR_NOISE_HANDSHAKE);
