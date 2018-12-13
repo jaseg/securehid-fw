@@ -8,6 +8,9 @@
 #include "crypto/noise-c/src/crypto/blake2/blake2s.h"
 
 
+#ifdef VERIFICATION
+#define HANDLE_NOISE_ERROR(x, msg) if (x) { goto errout; }
+#else
 #define HANDLE_NOISE_ERROR(x, msg) do { \
         err = x; \
         if (err != NOISE_ERROR_NONE) { \
@@ -17,6 +20,7 @@
             goto errout; \
         } \
     } while(0);
+#endif
 
 
 volatile uint8_t host_packet_buf[MAX_HOST_PACKET_SIZE];
@@ -83,7 +87,7 @@ int generate_identity_key(struct NoiseState *st) {
     HANDLE_NOISE_ERROR(noise_dhstate_generate_keypair(dh), "generating key pair");
 
     uint8_t unused[CURVE25519_KEY_LEN]; /* the noise api is a bit bad here. */
-    memset(st->local_key, 0, sizeof(*st->local_key));
+    memset(st->local_key, 0, sizeof(*st->local_key)); /* FIXME sizeof is wrong here */
 
     HANDLE_NOISE_ERROR(noise_dhstate_get_keypair(dh, st->local_key, CURVE25519_KEY_LEN, unused, sizeof(unused)), "saving key pair");
 
@@ -94,6 +98,15 @@ errout:
     return -1;
 }
 
+/*@requires \valid(st);
+   requires new_state == HANDSHAKE_UNINITIALIZED ||
+            new_state == HANDSHAKE_NOT_STARTED ||
+            new_state == HANDSHAKE_IN_PROGRESS ||
+            new_state == HANDSHAKE_DONE_UNKNOWN_HOST ||
+            new_state == HANDSHAKE_DONE_KNOWN_HOST;
+   ensures st->handshake_state == new_state;
+   ensures st->handshake == NULL;
+ @*/
 void uninit_handshake(struct NoiseState *st, enum handshake_state new_state) {
     if (st->handshake)
         noise_handshakestate_free(st->handshake);
@@ -102,7 +115,24 @@ void uninit_handshake(struct NoiseState *st, enum handshake_state new_state) {
     arm_key_scrubber();
 }
 
-int try_continue_noise_handshake(struct NoiseState *st, uint8_t *buf, size_t len) {
+//@ ghost int key_checked_trace = 0;
+//@ ghost int key_match_trace = 0;
+/*@ requires empty_trace: key_checked_trace == 0;
+    requires \valid(st);
+    requires \valid(st->handshake);
+
+    requires \valid(st->remote_key + (0..sizeof(st->remote_key)-1));
+    requires \valid(st->handshake_hash + (0..sizeof(st->handshake_hash)-1));
+
+    requires \separated(st, buf);
+    requires \separated(&usart2_out, \union(st, buf));
+    requires \separated(&st->handshake, st);
+    assigns key_checked_trace;
+    ensures (st->handshake_state == HANDSHAKE_DONE_KNOWN_HOST) ==> key_checked_trace == 1;
+    ensures (st->handshake_state != HANDSHAKE_IN_PROGRESS) ==>
+        key_match_trace == 1 || (st->failed_handshakes > \old(st->failed_handshakes));
+  @*/
+int try_continue_noise_handshake(struct NoiseState * const st, uint8_t *buf, size_t len) {
     int err;
     struct {
         struct control_packet header;
@@ -140,6 +170,7 @@ int try_continue_noise_handshake(struct NoiseState *st, uint8_t *buf, size_t len
         HANDLE_NOISE_ERROR(noise_handshakestate_split(st->handshake, &st->tx_cipher, &st->rx_cipher), "splitting handshake state");
         LOG_PRINTF("Noise protocol handshake completed successfully, handshake hash:\n");
 
+        //@ assert \valid(&st->handshake);
         if (noise_handshakestate_get_handshake_hash(st->handshake, st->handshake_hash, sizeof(st->handshake_hash)) != NOISE_ERROR_NONE) {
             LOG_PRINTF("Error fetching noise handshake state\n");
         } else {
@@ -150,6 +181,7 @@ int try_continue_noise_handshake(struct NoiseState *st, uint8_t *buf, size_t len
         }
 
         
+        //@ assert \valid(&st->handshake);
         NoiseDHState *remote_dh = noise_handshakestate_get_remote_public_key_dh(st->handshake);
         if (!remote_dh) {
             LOG_PRINTF("Error: Host has not identified itself\n");
@@ -165,7 +197,9 @@ int try_continue_noise_handshake(struct NoiseState *st, uint8_t *buf, size_t len
         BLAKE2s_update(&bc, st->remote_key, sizeof(st->remote_key));
         BLAKE2s_finish(&bc, remote_fp);
 
+        //@ ghost key_checked_trace = 1;
         if (!memcmp(remote_fp, st->remote_key_reference, sizeof(remote_fp))) { /* keys match */
+            //@ ghost key_match_trace = 1;
             uint8_t response = REPORT_PAIRING_SUCCESS;
             if (send_encrypted_message(st, &response, sizeof(response)))
                 LOG_PRINTF("Error sending pairing response packet\n");
