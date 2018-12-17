@@ -3,8 +3,13 @@
 
 #include <libopencm3/stm32/gpio.h>
 
+#ifndef VERIFICATION
 #define TRACING_SET(i) gpio_set(GPIOD, (1<<i))
 #define TRACING_CLEAR(i) gpio_clear(GPIOD, (1<<i))
+#else
+#define TRACING_SET(i) ((void)0)
+#define TRACING_CLEAR(i) ((void)0)
+#endif
 
 enum tracing_channels {
     TR_HID_MESSAGE_HANDLER = 0,

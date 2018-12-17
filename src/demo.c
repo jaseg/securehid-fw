@@ -20,20 +20,6 @@
  *
  */
 
-#include "usart_helpers.h"
-#include "usbh_core.h"
-#include "usbh_lld_stm32f4.h"
-#include "usbh_driver_hid.h"
-#include "usbh_driver_hub.h"
-#include "rand_stm32.h"
-#include "packet_interface.h"
-#include "noise.h"
-#include "hid_keycodes.h"
-#include "words.h"
-#include "tracing.h"
-
-#include "crypto/noise-c/src/protocol/internal.h"
-
 #include <libopencm3/stm32/rcc.h>
 #include <libopencm3/stm32/gpio.h>
 #include <libopencm3/stm32/usart.h>
@@ -48,6 +34,20 @@
 #include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
+
+#include "usart_helpers.h"
+#include "usbh_core.h"
+#include "usbh_lld_stm32f4.h"
+#include "usbh_driver_hid.h"
+#include "usbh_driver_hub.h"
+#include "rand_stm32.h"
+#include "packet_interface.h"
+#include "noise.h"
+#include "hid_keycodes.h"
+#include "words.h"
+#include "tracing.h"
+
+#include "crypto/noise-c/src/protocol/internal.h"
 
 #ifndef USE_STM32F4_USBH_DRIVER_FS
 #error The full-speed USB driver must be enabled with USE_STM32F4_USBH_DRIVER_FS in usbh_config.h!
@@ -439,7 +439,8 @@ void usart1_isr(void) {
     if (USART1_SR & USART_SR_ORE) { /* Overrun handling */
         LOG_PRINTF("USART1 data register overrun\n");
         /* Clear interrupt flag */
-        return (void)USART1_DR;
+        int dummy = USART1_DR;
+        return;
     }
 
     uint8_t data = USART1_DR; /* This automatically acknowledges the IRQ */
@@ -487,7 +488,17 @@ void DMA_ISR(DEBUG_USART_DMA_NUM, DEBUG_USART_DMA_STREAM_NUM)(void) {
     TRACING_CLEAR(TR_DEBUG_OUT_DMA_IRQ);
 }
 
-void handle_host_packet(struct control_packet *pkt, size_t payload_length) {
+/*@ requires \valid_read(&pkt->type) && \valid_read(pkt->payload + (0..payload_length-1));
+    requires \valid(st);
+    requires \valid(st->handshake);
+    requires \separated(st, st->rx_cipher, st->tx_cipher, st->handshake, (uint8_t *)pkt->payload, &usart2_out, &st->handshake_hash);
+    requires \valid(usart2_out);
+
+    assigns pairing_buf_pos, *usart2_out, *st;
+
+    assigns st->handshake, st->handshake_state, st->rx_cipher, st->tx_cipher;
+  @*/
+void handle_host_packet(struct NoiseState *st, const struct control_packet *pkt, size_t payload_length) {
     TRACING_SET(TR_HOST_PKT_HANDLER);
     if (pkt->type == HOST_INITIATE_HANDSHAKE) {
         /* It is important that we acknowledge this command right away. Starting the handshake involves key
@@ -496,9 +507,9 @@ void handle_host_packet(struct control_packet *pkt, size_t payload_length) {
 
         if (payload_length > 0) {
             LOG_PRINTF("Extraneous data in INITIATE_HANDSHAKE message\n");
-        } else if (noise_state.failed_handshakes < MAX_FAILED_HANDSHAKES) {
+        } else if (st->failed_handshakes < MAX_FAILED_HANDSHAKES) {
             LOG_PRINTF("Starting noise protocol handshake...\n");
-            if (reset_protocol_handshake(&noise_state))
+            if (reset_protocol_handshake(st))
                 LOG_PRINTF("Error starting protocol handshake.\n");
             pairing_buf_pos = 0; /* Reset channel binding keyboard input buffer */
         } else {
@@ -510,7 +521,7 @@ void handle_host_packet(struct control_packet *pkt, size_t payload_length) {
     } else if (pkt->type == HOST_HANDSHAKE) {
         LOG_PRINTF("Handling handshake packet of length %d\n", payload_length);
         TRACING_SET(TR_NOISE_HANDSHAKE);
-        if (try_continue_noise_handshake(&noise_state, pkt->payload, payload_length)) {
+        if (try_continue_noise_handshake(st, pkt->payload, payload_length)) {
             TRACING_CLEAR(TR_NOISE_HANDSHAKE);
             LOG_PRINTF("Reporting handshake error to host\n");
             struct control_packet out = { .type=HOST_CRYPTO_ERROR };
@@ -565,7 +576,11 @@ int main(void)
 	LOG_PRINTF("Initializing RNG...\n");
     rand_init();
 
+    //@ assert \valid(&noise_state);
+    //@ assert \valid((uint8_t *)keystore.keys.remote_key_reference + (0..31)) && \valid((uint8_t *)keystore.keys.local_key + (0..31));
     noise_state_init(&noise_state, keystore.keys.remote_key_reference, keystore.keys.local_key);
+
+    //@ assert \valid(noise_state.local_key + (0..31));
     /* FIXME load remote key from backup memory */
     /* FIXME only run this on first boot and persist key in backup sram. Allow reset via jumper-triggered factory reset function. */
     if (!keystore.mgmt.identity_key_valid) {
@@ -633,13 +648,13 @@ int main(void)
         }
 
         if (host_packet_length > 0) {
-            handle_host_packet((struct control_packet *)host_packet_buf, host_packet_length - 1);
+            handle_host_packet(&noise_state, (struct control_packet *)host_packet_buf, host_packet_length - 1);
             host_packet_length = 0; /* Acknowledge to USART ISR the buffer has been handled */
 
         } else if (host_packet_length < 0) { /* USART error */
             host_packet_length = 0; /* Acknowledge to USART ISR the error has been handled */
             if (noise_state.handshake_state < HANDSHAKE_DONE_UNKNOWN_HOST) {
-                LOG_PRINTF("USART error, aborting handshake\n")
+                LOG_PRINTF("USART error, aborting handshake\n");
 
                 struct control_packet pkt = { .type=HOST_COMM_ERROR };
                 send_packet(usart2_out, (uint8_t *)&pkt, sizeof(pkt));

@@ -52,9 +52,8 @@ volatile int host_packet_length = 0;
 
 /*@
     requires \valid(st);
-    requires \valid_read(remote_key_reference + (0..31)) && \valid_read(local_key + (0..31));
 
-    ensures \valid_read(st->remote_key_reference + (0..31)) && \valid_read(st->local_key + (0..31));
+    ensures st->remote_key_reference == remote_key_reference && st->local_key == local_key;
     ensures st->handshake_state == HANDSHAKE_UNINITIALIZED;
     ensures st->failed_handshakes == 0;
     ensures st->tx_cipher == NULL && st->rx_cipher == NULL && st->handshake == NULL;
@@ -74,7 +73,7 @@ void noise_state_init(struct NoiseState *st, uint8_t *remote_key_reference, uint
 /*@
     requires \valid(st);
     requires \valid(st->handshake_hash + (0..31));
-    requires \separated(st->handshake_hash + (0..31), st, st->rx_cipher, st->tx_cipher, st->handshake);
+    requires \separated(st, st->rx_cipher, st->tx_cipher, st->handshake);
 
     ensures \result == 0 ==> (
         \valid(st->handshake) &&
@@ -188,9 +187,9 @@ void uninit_handshake(struct NoiseState *st, enum handshake_state new_state) {
     arm_key_scrubber();
 }
 
-//@ ghost int key_checked_trace = 0;
-//@ ghost int key_match_trace = 0;
-/*@ requires empty_trace: key_checked_trace == 0;
+//@ ghost int key_checked_trace;
+//@ ghost int key_match_trace;
+/*@ 
     requires \valid(st);
     requires \valid(usart2_out);
     requires \valid(st->handshake);
@@ -198,15 +197,17 @@ void uninit_handshake(struct NoiseState *st, enum handshake_state new_state) {
     requires \valid(st->remote_key + (0..sizeof(st->remote_key)-1));
     requires \valid(st->handshake_hash + (0..sizeof(st->handshake_hash)-1));
 
-    requires \separated(st, buf);
-    requires \separated(&usart2_out, \union(st, buf));
-    requires \separated(&st->handshake, st);
+    requires \separated(&usart2_out, st, buf, st->handshake, &st->handshake_hash);
+
     assigns key_checked_trace;
+
     ensures (st->handshake_state == HANDSHAKE_DONE_KNOWN_HOST) ==> key_checked_trace == 1;
     ensures (st->handshake_state != HANDSHAKE_IN_PROGRESS) ==>
         key_match_trace == 1 || (st->failed_handshakes > \old(st->failed_handshakes));
   @*/
 int try_continue_noise_handshake(struct NoiseState * const st, uint8_t *buf, size_t len) {
+    //@ ghost key_checked_trace = 0;
+    //@ ghost key_match_trace = 0;
     int err;
     struct {
         struct control_packet header;
