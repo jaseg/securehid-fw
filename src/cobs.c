@@ -73,7 +73,6 @@ ssize_t cobs_encode(char *dst, size_t dstlen, char *src, size_t srclen) {
 }
 
 /*@ requires \valid_read(src + (0..srclen-1));
-  @ requires srclen < 1000000-2;
   @*/
 #ifndef VERIFICATION
 int cobs_encode_incremental(void *f, int (*output)(void *f, unsigned char c), unsigned char *src, size_t srclen) {

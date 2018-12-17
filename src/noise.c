@@ -51,12 +51,13 @@ volatile int host_packet_length = 0;
 
 
 /*@
-    requires \valid(st);
+    requires validity: \valid(st);
 
-    ensures st->remote_key_reference == remote_key_reference && st->local_key == local_key;
-    ensures st->handshake_state == HANDSHAKE_UNINITIALIZED;
-    ensures st->failed_handshakes == 0;
-    ensures st->tx_cipher == NULL && st->rx_cipher == NULL && st->handshake == NULL;
+    ensures equal: st->remote_key_reference == remote_key_reference && st->local_key == local_key;
+    ensures equal: st->handshake_state == HANDSHAKE_UNINITIALIZED;
+    ensures equal: st->failed_handshakes == 0;
+    ensures equal: st->tx_cipher == NULL && st->rx_cipher == NULL && st->handshake == NULL;
+
     assigns *st;
  */
 void noise_state_init(struct NoiseState *st, uint8_t *remote_key_reference, uint8_t *local_key) {
@@ -71,21 +72,18 @@ void noise_state_init(struct NoiseState *st, uint8_t *remote_key_reference, uint
 }
 
 /*@
-    requires \valid(st);
-    requires \valid(st->handshake_hash + (0..31));
-    requires \separated(st, st->rx_cipher, st->tx_cipher, st->handshake);
+    requires validity: \valid(st) && \valid(st->handshake_hash + (0..31)) && \valid_read(st->local_key + (0..31));
+    requires separation: \separated(st, st->rx_cipher, st->tx_cipher, st->handshake);
 
-    ensures \result == 0 ==> (
+    ensures result: \result \in {0, -1};
+    ensures success: \result == 0 ==> (
         \valid(st->handshake) &&
         (st->handshake_state == HANDSHAKE_IN_PROGRESS));
-
-    ensures \result != 0 ==> (
+    ensures failure: \result != 0 ==> (
         (st->handshake == NULL) &&
         (st->handshake_state == HANDSHAKE_UNINITIALIZED));
 
-    ensures \result \in {0, -1};
-
-    assigns st->handshake, st->handshake_state, st->rx_cipher, st->tx_cipher;
+    assigns *st, *st->rx_cipher, *st->tx_cipher;
  */
 int reset_protocol_handshake(struct NoiseState *st) {
     uninit_handshake(st, HANDSHAKE_UNINITIALIZED);
@@ -95,21 +93,19 @@ int reset_protocol_handshake(struct NoiseState *st) {
     st->tx_cipher = NULL;
     st->rx_cipher = NULL;
     st->handshake = NULL;
-    memset(st->handshake_hash, 0, sizeof(st->handshake_hash));
+    fc_memset_uint8(st->handshake_hash, 0, sizeof(st->handshake_hash));
     return start_protocol_handshake(st);
 }
 
-/*@ requires \valid(st) && \valid_read(st->local_key + (0..31));
+/*@ requires validity: \valid(st) && \valid_read(st->local_key + (0..31));
   
-    ensures \result == 0 ==> (
+    ensures result: \result \in {0, -1};
+    ensures success: \result == 0 ==> (
         \valid(st->handshake) &&
-        (st->handshake_state == HANDSHAKE_IN_PROGRESS));
-
-    ensures \result != 0 ==> (
-        (st->handshake == \old(st->handshake)) &&
-        (st->handshake_state == \old(st->handshake_state)));
-
-    ensures \result \in {0, -1};
+        st->handshake_state == HANDSHAKE_IN_PROGRESS);
+    ensures failure: \result != 0 ==> (
+        st->handshake == \old(st->handshake) &&
+        st->handshake_state == \old(st->handshake_state));
 
     assigns st->handshake, st->handshake_state;
  */
@@ -143,9 +139,9 @@ errout:
     return -1;
 }
 
-/*@ requires \valid(st);
-    requires \valid(st->local_key + (0..31));
-    requires \separated(st, st->local_key + (0..31));
+/*@ requires validity: \valid(st) && \valid(st->local_key + (0..31));
+    requires separation: \separated(st, st->local_key + (0..31));
+
     assigns st->local_key[0..31];
  */
 int generate_identity_key(struct NoiseState *st) {
@@ -168,14 +164,13 @@ errout:
     return -1;
 }
 
-/*@requires \valid(st);
-   requires new_state == HANDSHAKE_UNINITIALIZED ||
-            new_state == HANDSHAKE_NOT_STARTED ||
-            new_state == HANDSHAKE_IN_PROGRESS ||
-            new_state == HANDSHAKE_DONE_UNKNOWN_HOST ||
-            new_state == HANDSHAKE_DONE_KNOWN_HOST;
-   ensures st->handshake_state == new_state;
-   ensures st->handshake == NULL;
+/*@requires validity: \valid(st);
+   requires state_valid: new_state \in
+           {HANDSHAKE_UNINITIALIZED, HANDSHAKE_NOT_STARTED, HANDSHAKE_IN_PROGRESS,
+           HANDSHAKE_DONE_UNKNOWN_HOST, HANDSHAKE_DONE_KNOWN_HOST};
+
+   ensures state: st->handshake_state == new_state;
+   ensures handshake: st->handshake == NULL;
 
    assigns st->handshake, st->handshake_state;
  @*/
@@ -190,18 +185,25 @@ void uninit_handshake(struct NoiseState *st, enum handshake_state new_state) {
 //@ ghost int key_checked_trace;
 //@ ghost int key_match_trace;
 /*@ 
-    requires \valid(st);
-    requires \valid(usart2_out);
-    requires \valid(st->handshake);
+    requires validity: \valid(st) && \valid(usart2_out) && \valid(st->handshake);
 
-    requires \valid(st->remote_key + (0..sizeof(st->remote_key)-1));
-    requires \valid(st->handshake_hash + (0..sizeof(st->handshake_hash)-1));
+    requires validity: \valid(st->remote_key + (0..sizeof(st->remote_key)-1));
+    requires validity: \valid(st->handshake_hash + (0..sizeof(st->handshake_hash)-1));
 
-    requires \separated(&usart2_out, st, buf, st->handshake, &st->handshake_hash);
+    requires separation: \separated(&usart2_out, st, buf, st->handshake, &st->handshake_hash);
 
-    ensures (st->handshake_state == HANDSHAKE_DONE_KNOWN_HOST) ==> key_checked_trace == 1;
-    ensures (st->handshake_state != HANDSHAKE_IN_PROGRESS) ==>
+    ensures result: \result \in {0, -1};
+
+    ensures state_legal: st->handshake_state \in
+            {HANDSHAKE_UNINITIALIZED, HANDSHAKE_IN_PROGRESS, HANDSHAKE_DONE_KNOWN_HOST, HANDSHAKE_DONE_UNKNOWN_HOST};
+    ensures transition_legal_advance: (\old(st->handshake_state) != HANDSHAKE_IN_PROGRESS)
+            ==> st->handshake_state == HANDSHAKE_UNINITIALIZED;
+    ensures transition_legal_failure: st->handshake_state == HANDSHAKE_UNINITIALIZED <==> \result == -1;
+
+    ensures permission_valid: (st->handshake_state == HANDSHAKE_DONE_KNOWN_HOST) ==> key_checked_trace == 1;
+    ensures state_advance_condition: (st->handshake_state != HANDSHAKE_IN_PROGRESS) ==>
         key_match_trace == 1 || (st->failed_handshakes > \old(st->failed_handshakes));
+
   @*/
 int try_continue_noise_handshake(struct NoiseState * const st, uint8_t *buf, size_t len) {
     //@ ghost key_checked_trace = 0;
@@ -303,11 +305,11 @@ errout:
 }
 
 /*@
-    requires \valid(st);
-    requires \valid_read(st->remote_key + (0..sizeof(st->remote_key)-1));
-    requires \valid(st->remote_key_reference + (0..31));
+    requires validity: \valid(st);
+    requires validity: \valid_read(st->remote_key + (0..sizeof(st->remote_key)-1));
+    requires validity: \valid(st->remote_key_reference + (0..31));
 
-    ensures st->handshake_state == HANDSHAKE_DONE_KNOWN_HOST;
+    ensures state: st->handshake_state == HANDSHAKE_DONE_KNOWN_HOST;
     assigns st->remote_key_reference[0..31], st->handshake_state;
  */
 void persist_remote_key(struct NoiseState *st) {
@@ -319,14 +321,11 @@ void persist_remote_key(struct NoiseState *st) {
 }
 
 /*@
-  requires \valid(st);
-  requires \valid(usart2_out);
-  requires \valid(st->tx_cipher);
-  requires \valid_read(msg + (0..len-1));
-  requires 0 <= len <= 65536;
+  requires validity: \valid(st) && \valid(usart2_out) && \valid(st->tx_cipher) && \valid_read(msg + (0..len-1));
 
+  ensures length: !(0 <= len <= MAX_HOST_PACKET_SIZE) <==> \result == -3;
   ensures \result \in {0, -1, -2, -3};
-  assigns *st->tx_cipher;
+  assigns *st->tx_cipher, *usart2_out;
  */
 int send_encrypted_message(struct NoiseState *st, const uint8_t *msg, size_t len) {
     int err;
@@ -336,14 +335,14 @@ int send_encrypted_message(struct NoiseState *st, const uint8_t *msg, size_t len
         uint8_t payload[MAX_HOST_PACKET_SIZE];
     } pkt;
 
-    if (!st->tx_cipher) {
-        LOG_PRINTF("Cannot send encrypted packet: Data ciphers not yet initialized\n");
-        return -1;
-    }
-
     if (len > sizeof(pkt.payload)) {
         LOG_PRINTF("Packet too long\n");
         return -3;
+    }
+
+    if (!st->tx_cipher) {
+        LOG_PRINTF("Cannot send encrypted packet: Data ciphers not yet initialized\n");
+        return -1;
     }
 
     pkt.header.type = HOST_DATA;
