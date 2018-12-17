@@ -22,22 +22,72 @@
     } while(0);
 #endif
 
+#ifdef VERIFICATION
+
+/*@ requires \valid(s + (0..n-1));
+  @ assigns s[0..n-1] \from c;
+  @ assigns \result \from s;
+  @ ensures result_ptr: \result == s;
+  @*/
+uint8_t *fc_memset_uint8(uint8_t *s, int c, size_t n);
+
+/*@ requires \valid(dest + (0..n-1));
+  @ requires \valid_read(src + (0..n-1));
+  @ assigns dest[0..n-1] \from src[0..n-1];
+  @ assigns \result \from dest;
+  @ ensures result_ptr: \result == dest;
+  @ ensures equals: \forall integer i; 0 <= i <= n-1 ==> dest[i] == src[i];
+  @*/
+uint8_t *fc_memcpy_uint8(uint8_t *dest, const uint8_t *src, size_t n);
+
+#else
+#define fc_memset_uint8 memset
+#define fc_memcpy_uint8 memcpy
+#endif
+
 
 volatile uint8_t host_packet_buf[MAX_HOST_PACKET_SIZE];
 volatile int host_packet_length = 0;
 
 
+/*@
+    requires \valid(st);
+    requires \valid_read(remote_key_reference + (0..31)) && \valid_read(local_key + (0..31));
+
+    ensures \valid_read(st->remote_key_reference + (0..31)) && \valid_read(st->local_key + (0..31));
+    ensures st->handshake_state == HANDSHAKE_UNINITIALIZED;
+    ensures st->failed_handshakes == 0;
+    ensures st->tx_cipher == NULL && st->rx_cipher == NULL && st->handshake == NULL;
+    assigns *st;
+ */
 void noise_state_init(struct NoiseState *st, uint8_t *remote_key_reference, uint8_t *local_key) {
     st->handshake_state = HANDSHAKE_UNINITIALIZED;
     st->handshake = NULL;
     st->tx_cipher = NULL;
     st->rx_cipher = NULL;
-    memset(st->handshake_hash, 0, sizeof(st->handshake_hash));
+    fc_memset_uint8(st->handshake_hash, 0, sizeof(st->handshake_hash));
     st->remote_key_reference = remote_key_reference;
     st->local_key = local_key;
     st->failed_handshakes = 0;
 }
 
+/*@
+    requires \valid(st);
+    requires \valid(st->handshake_hash + (0..31));
+    requires \separated(st->handshake_hash + (0..31), st, st->rx_cipher, st->tx_cipher, st->handshake);
+
+    ensures \result == 0 ==> (
+        \valid(st->handshake) &&
+        (st->handshake_state == HANDSHAKE_IN_PROGRESS));
+
+    ensures \result != 0 ==> (
+        (st->handshake == NULL) &&
+        (st->handshake_state == HANDSHAKE_UNINITIALIZED));
+
+    ensures \result \in {0, -1};
+
+    assigns st->handshake, st->handshake_state, st->rx_cipher, st->tx_cipher;
+ */
 int reset_protocol_handshake(struct NoiseState *st) {
     uninit_handshake(st, HANDSHAKE_UNINITIALIZED);
     disarm_key_scrubber();
@@ -45,10 +95,25 @@ int reset_protocol_handshake(struct NoiseState *st) {
     noise_cipherstate_free(st->rx_cipher);
     st->tx_cipher = NULL;
     st->rx_cipher = NULL;
+    st->handshake = NULL;
     memset(st->handshake_hash, 0, sizeof(st->handshake_hash));
     return start_protocol_handshake(st);
 }
 
+/*@ requires \valid(st) && \valid_read(st->local_key + (0..31));
+  
+    ensures \result == 0 ==> (
+        \valid(st->handshake) &&
+        (st->handshake_state == HANDSHAKE_IN_PROGRESS));
+
+    ensures \result != 0 ==> (
+        (st->handshake == \old(st->handshake)) &&
+        (st->handshake_state == \old(st->handshake_state)));
+
+    ensures \result \in {0, -1};
+
+    assigns st->handshake, st->handshake_state;
+ */
 int start_protocol_handshake(struct NoiseState *st) {
     /* TODO Noise-C is nice for prototyping, but we should really get rid of it for mostly three reasons:
      *   * We don't need cipher/protocol agility, and by baking the final protocol into the firmware we can save a lot
@@ -79,6 +144,11 @@ errout:
     return -1;
 }
 
+/*@ requires \valid(st);
+    requires \valid(st->local_key + (0..31));
+    requires \separated(st, st->local_key + (0..31));
+    assigns st->local_key[0..31];
+ */
 int generate_identity_key(struct NoiseState *st) {
     NoiseDHState *dh;
     int err;
@@ -87,10 +157,11 @@ int generate_identity_key(struct NoiseState *st) {
     HANDLE_NOISE_ERROR(noise_dhstate_generate_keypair(dh), "generating key pair");
 
     uint8_t unused[CURVE25519_KEY_LEN]; /* the noise api is a bit bad here. */
-    memset(st->local_key, 0, sizeof(*st->local_key)); /* FIXME sizeof is wrong here */
+    fc_memset_uint8(st->local_key, 0, CURVE25519_KEY_LEN);
 
     HANDLE_NOISE_ERROR(noise_dhstate_get_keypair(dh, st->local_key, CURVE25519_KEY_LEN, unused, sizeof(unused)), "saving key pair");
 
+    noise_dhstate_free(dh);
     return 0;
 errout:
     if (dh)
@@ -106,6 +177,8 @@ errout:
             new_state == HANDSHAKE_DONE_KNOWN_HOST;
    ensures st->handshake_state == new_state;
    ensures st->handshake == NULL;
+
+   assigns st->handshake, st->handshake_state;
  @*/
 void uninit_handshake(struct NoiseState *st, enum handshake_state new_state) {
     if (st->handshake)
@@ -119,6 +192,7 @@ void uninit_handshake(struct NoiseState *st, enum handshake_state new_state) {
 //@ ghost int key_match_trace = 0;
 /*@ requires empty_trace: key_checked_trace == 0;
     requires \valid(st);
+    requires \valid(usart2_out);
     requires \valid(st->handshake);
 
     requires \valid(st->remote_key + (0..sizeof(st->remote_key)-1));
@@ -194,7 +268,7 @@ int try_continue_noise_handshake(struct NoiseState * const st, uint8_t *buf, siz
         uint8_t remote_fp[BLAKE2S_HASH_SIZE];
         BLAKE2s_context_t bc;
         BLAKE2s_reset(&bc);
-        BLAKE2s_update(&bc, st->remote_key, sizeof(st->remote_key));
+        fc_BLAKE2s_update_uint8(&bc, st->remote_key, sizeof(st->remote_key));
         BLAKE2s_finish(&bc, remote_fp);
 
         //@ ghost key_checked_trace = 1;
@@ -229,15 +303,33 @@ errout:
     return -1;
 }
 
+/*@
+    requires \valid(st);
+    requires \valid_read(st->remote_key + (0..sizeof(st->remote_key)-1));
+    requires \valid(st->remote_key_reference + (0..31));
+
+    ensures st->handshake_state == HANDSHAKE_DONE_KNOWN_HOST;
+    assigns st->remote_key_reference[0..31], st->handshake_state;
+ */
 void persist_remote_key(struct NoiseState *st) {
     BLAKE2s_context_t bc;
     BLAKE2s_reset(&bc);
-    BLAKE2s_update(&bc, st->remote_key, sizeof(st->remote_key));
+    fc_BLAKE2s_update_uint8(&bc, st->remote_key, sizeof(st->remote_key));
     BLAKE2s_finish(&bc, st->remote_key_reference);
     st->handshake_state = HANDSHAKE_DONE_KNOWN_HOST;
 }
 
-int send_encrypted_message(struct NoiseState *st, uint8_t *msg, size_t len) {
+/*@
+  requires \valid(st);
+  requires \valid(usart2_out);
+  requires \valid(st->tx_cipher);
+  requires \valid_read(msg + (0..len-1));
+  requires 0 <= len <= 65536;
+
+  ensures \result \in {0, -1, -2, -3};
+  assigns *st->tx_cipher;
+ */
+int send_encrypted_message(struct NoiseState *st, const uint8_t *msg, size_t len) {
     int err;
     NoiseBuffer noise_buf;
     struct {
@@ -256,7 +348,7 @@ int send_encrypted_message(struct NoiseState *st, uint8_t *msg, size_t len) {
     }
 
     pkt.header.type = HOST_DATA;
-    memcpy(pkt.payload, msg, len); /* This is necessary because noises API doesn't support separate in and out buffers. D'oh! */
+    fc_memcpy_uint8(pkt.payload, msg, len); /* This is necessary because noises API doesn't support separate in and out buffers. D'oh! */
     noise_buffer_set_inout(noise_buf, pkt.payload, len, sizeof(pkt.payload));
 
     HANDLE_NOISE_ERROR(noise_cipherstate_encrypt(st->tx_cipher, &noise_buf), "encrypting data");

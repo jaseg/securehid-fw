@@ -45,9 +45,12 @@ int start_protocol_handshake(struct NoiseState *st);
 int reset_protocol_handshake(struct NoiseState *st);
 int generate_identity_key(struct NoiseState *st);
 int try_continue_noise_handshake(struct NoiseState * const st, uint8_t *buf, size_t len);
-int send_encrypted_message(struct NoiseState *st, uint8_t *msg, size_t len);
+int send_encrypted_message(struct NoiseState *st, const uint8_t *msg, size_t len);
 
+/*@ assigns \nothing; */
 void arm_key_scrubber(void);
+
+/*@ assigns \nothing; */
 void disarm_key_scrubber(void);
 
 #endif

@@ -46,6 +46,13 @@ struct control_packet {
 } __attribute__((__packed__));
 
 
+/*@
+    requires \valid(f);
+    requires \valid_read(data + (0..len-1));
+    requires len > 0;
+
+    assigns \nothing;
+ */
 void send_packet(struct dma_usart_file *f, const uint8_t *data, size_t len);
 
 #endif
