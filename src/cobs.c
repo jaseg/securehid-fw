@@ -213,17 +213,28 @@ void cobs_decode_incremental_initialize(struct cobs_decode_state *state) {
     state->c = 0;
 }
 
-/*@ requires \separated(state, dst + (0..dstlen-1));
-    requires \valid(state);
-    requires \valid(dst + (0..dstlen-1));
-    requires 0 < dstlen <= 65535;
-    requires 0 <= state->p <= dstlen+1;
-    requires state->p != 0 ==> 1 <= state->c <= 255;
+/*@ requires    separation: \separated(state, dst + (0..dstlen-1));
+    requires   state_valid: \valid(state);
+    requires     dst_valid: \valid(dst + (0..dstlen-1));
+    requires dstlen_bounds: 0 < dstlen <= INT_MAX;
+    requires       p_valid: 0 <= state->p <= dstlen+1;
+    requires       c_valid: state->p != 0 ==> 1 <= state->c <= 255;
     
-    ensures state->p != 0 ==> 1 <= state->c <= 255;
-    ensures 0 <= state->p <= dstlen+1;
-    ensures 0 <= \result <= dstlen || \result \in {-1, -2, -3, -4};
-    ensures \result < -1 ==> state->p == 0 && state->c == 0;
+    // Sanity properties
+    ensures         c_valid: state->p != 0 ==> 1 <= state->c <= 255;
+    ensures   buffer_bounds: 0 <= state->p <= dstlen+1;
+    ensures    return_value: 0 <= \result <= dstlen || \result \in {-1, -2, -3, -4};
+    ensures  reset_on_error: \result < -1 ==> state->p == 0 && state->c == 0;
+
+    // Synchronization properties
+    ensures       self_synchronization: src == 0 ==> \result >= 0 || \result \in {-2, -3};
+    ensures synchronization_robustness: src != 0 ==> \result \in {-1, -4};
+
+    // Basic functional sanity
+    ensures       legal_advance: \result != -1 <==> state->p \in {0, \old(state->p)};
+    ensures incremental_advance: \result == -1 <==> state->p == \old(state->p) + 1;
+    ensures  nonzero_unmodified: \result == -1 && state->p > 1 ==> dst[state->p-2] \in {0, src};
+
     assigns *state, dst[0..dstlen-1];
   
     behavior eof_bad_empty_frame:
@@ -231,7 +242,7 @@ void cobs_decode_incremental_initialize(struct cobs_decode_state *state) {
         ensures \result == -3;
         assigns *state;
 
-    behavior eof_good_frame:
+    behavior eof_maybe_good_frame:
         assumes state->p != 0 && src == 0;
         ensures \result >= 0 || \result == -2;
         assigns *state;
@@ -254,29 +265,25 @@ int cobs_decode_incremental(struct cobs_decode_state *state, unsigned char *dst,
         if (src == 0) {
             /* invalid framing. An empty frame would be [...] 00 01 00, not [...] 00 00 */
             cobs_decode_incremental_initialize(state);
-            //@ assert 0 <= state->p <= dstlen;
             return -3;
         }
         state->c = src;
         state->p++;
-        //@ assert 0 <= state->p <= dstlen;
         return -1;
     }
 
     if (!src) {
         if (state->c != 1) {
-            /* Invalid framing. The skip counter does not hit the end of the frame. */
+            /* invalid framing. The skip counter does not hit the end of the frame. */
             cobs_decode_incremental_initialize(state);
-            //@ assert 0 <= state->p <= dstlen;
             return -2;
         }
         size_t rv = state->p-1;
         cobs_decode_incremental_initialize(state);
-        //@ assert 0 <= state->p <= dstlen;
         return rv;
     }
 
-    char val;
+    unsigned char val;
     state->c--;
 
     if (state->c == 0) {
@@ -289,13 +296,10 @@ int cobs_decode_incremental(struct cobs_decode_state *state, unsigned char *dst,
     size_t pos = state->p-1;
     if (pos >= dstlen) {
         cobs_decode_incremental_initialize(state);
-        //@ assert 0 <= state->p <= dstlen+1;
         return -4; /* output buffer too small */
     }
     dst[pos] = val;
-    //@ assert 0 <= state->p <= dstlen;
     state->p++;
-    //@ assert 0 <= state->p <= dstlen+1;
     return -1;
 }
 
