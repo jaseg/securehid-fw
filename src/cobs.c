@@ -72,19 +72,28 @@ ssize_t cobs_encode(char *dst, size_t dstlen, char *src, size_t srclen) {
     return srclen+2;
 }
 
-int cobs_encode_incremental(void *f, int (*output)(void *f, char c), char *src, size_t srclen) {
+/*@ requires \valid_read(src + (0..srclen-1));
+  @ requires srclen < 1000000-2;
+  @*/
+#ifndef VERIFICATION
+int cobs_encode_incremental(void *f, int (*output)(void *f, unsigned char c), unsigned char *src, size_t srclen) {
+#else
+int fc_verification_cobs_encode_incremental(unsigned char *src, size_t srclen) {
+#endif
+    //@ ghost unsigned char output_buf[1000000];
     if (srclen > 254)
         return -1;
     //@ assert 0 <= srclen <= 254;
 
     size_t p = 0;
     /*@ loop invariant 0 <= p <= srclen+1;
-      @ loop assigns p;
+      @ loop invariant \forall integer i; 0 <= i < p ==> output_buf[i] != 0;
+      @ loop assigns p, output_buf[0..srclen+1];
       @ loop variant srclen-p+1;
       @*/
     while (p <= srclen) {
 
-        char val;
+        unsigned char val;
         if (p != 0 && src[p-1] != 0) {
             val = src[p-1];
 
@@ -97,22 +106,25 @@ int cobs_encode_incremental(void *f, int (*output)(void *f, char c), char *src, 
               @*/
             while (q < srclen && src[q] != 0)
                 q++;
-            //@ assert q == srclen || src[q] == 0;
-            //@ assert q <= srclen <= 254;
-            val = (char)q-p+1;
-            //@ assert val != 0;
+            val = (unsigned char)q-p+1;
         }
 
+        //@ ghost output_buf[p] = val;
+#ifndef VERIFICATION
         int rv = output(f, val);
         if (rv)
             return rv;
+#endif
         p++;
     }
 
+    //@ assert frame_size: p == srclen+1;
+    //@ assert synchronization_robustness: \forall integer i; 0 <= i < p ==> output_buf[i] != 0;
+#ifndef VERIFICATION
     int rv = output(f, 0);
     if (rv)
         return rv;
-    //@ assert p == srclen+1;
+#endif
 
     return 0;
 }

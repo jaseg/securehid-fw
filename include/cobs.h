@@ -15,7 +15,7 @@ struct cobs_decode_state {
 ssize_t cobs_encode(char *dst, size_t dstlen, char *src, size_t srclen);
 ssize_t cobs_decode(char *dst, size_t dstlen, char *src, size_t srclen);
 
-int cobs_encode_incremental(void *f, int (*output)(void *, char), char *src, size_t srclen);
+int cobs_encode_incremental(void *f, int (*output)(void *f, unsigned char c), unsigned char *src, size_t srclen);
 
 /*@ requires \valid(state);
     ensures state->p == 0 && state->c == 0;
