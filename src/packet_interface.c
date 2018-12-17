@@ -66,17 +66,27 @@ void usart2_isr(void) {
     }
 
     ssize_t rv = cobs_decode_incremental(&host_cobs_state, (char *)host_packet_buf, sizeof(host_packet_buf), data);
-    if (rv == -2) {
-        LOG_PRINTF("Host interface COBS packet too large\n");
+    if (rv == 0) {
+        /* good, empty frame */
+        LOG_PRINTF("Got empty frame from host\n");
         host_packet_length = -1;
-    } else if (rv == -3) {
-        LOG_PRINTF("Got double null byte from host\n");
-    } else if (rv < 0) {
+    } else if (rv == -1) {
+        /* Decoding frame, wait for next byte */
+    } else if (rv == -2) {
         LOG_PRINTF("Host interface COBS framing error\n");
         host_packet_length = -1;
+    } else if (rv == -3) {
+        /* invalid empty frame */
+        LOG_PRINTF("Got double null byte from host\n");
+        host_packet_length = -1;
+    } else if (rv == -4) {
+        /* frame too large */
+        LOG_PRINTF("Got too large frame from host\n");
+        host_packet_length = -1;
     } else if (rv > 0) {
+        /* Good, non-empty frame */
         host_packet_length = rv;
-    } /* else just return and wait for next byte */
+    }
     TRACING_CLEAR(TR_HOST_IF_USART_IRQ);
 }
 

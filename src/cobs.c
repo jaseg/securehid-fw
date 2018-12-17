@@ -213,20 +213,66 @@ void cobs_decode_incremental_initialize(struct cobs_decode_state *state) {
     state->c = 0;
 }
 
-int cobs_decode_incremental(struct cobs_decode_state *state, char *dst, size_t dstlen, char src) {
+/*@ requires \separated(state, dst + (0..dstlen-1));
+    requires \valid(state);
+    requires \valid(dst + (0..dstlen-1));
+    requires 0 < dstlen <= 65535;
+    requires 0 <= state->p <= dstlen+1;
+    requires state->p != 0 ==> 1 <= state->c <= 255;
+    
+    ensures state->p != 0 ==> 1 <= state->c <= 255;
+    ensures 0 <= state->p <= dstlen+1;
+    ensures 0 <= \result <= dstlen || \result \in {-1, -2, -3, -4};
+    ensures \result < -1 ==> state->p == 0 && state->c == 0;
+    assigns *state, dst[0..dstlen-1];
+  
+    behavior eof_bad_empty_frame:
+        assumes state->p == 0 && src == 0;
+        ensures \result == -3;
+        assigns *state;
+
+    behavior eof_good_frame:
+        assumes state->p != 0 && src == 0;
+        ensures \result >= 0 || \result == -2;
+        assigns *state;
+
+    behavior decoding_no_overflow:
+        assumes src != 0 && state->p <= dstlen;
+        ensures \result == -1;
+        assigns *state, dst[0..dstlen-1];
+
+    behavior decoding_overflow:
+        assumes src != 0 && state->p > dstlen;
+        ensures \result == -4;
+        assigns *state;
+
+    complete behaviors;
+    disjoint behaviors;
+  @*/
+int cobs_decode_incremental(struct cobs_decode_state *state, unsigned char *dst, size_t dstlen, unsigned char src) {
     if (state->p == 0) {
-        if (src == 0)
-            goto empty_errout; /* invalid framing. An empty frame would be [...] 00 01 00, not [...] 00 00 */
-        state->c = (unsigned char)src;
+        if (src == 0) {
+            /* invalid framing. An empty frame would be [...] 00 01 00, not [...] 00 00 */
+            cobs_decode_incremental_initialize(state);
+            //@ assert 0 <= state->p <= dstlen;
+            return -3;
+        }
+        state->c = src;
         state->p++;
-        return 0;
+        //@ assert 0 <= state->p <= dstlen;
+        return -1;
     }
 
     if (!src) {
-        if (state->c != 1)
-            goto errout; /* Invalid framing. The skip counter does not hit the end of the frame. */
-        int rv = state->p-1;
+        if (state->c != 1) {
+            /* Invalid framing. The skip counter does not hit the end of the frame. */
+            cobs_decode_incremental_initialize(state);
+            //@ assert 0 <= state->p <= dstlen;
+            return -2;
+        }
+        size_t rv = state->p-1;
         cobs_decode_incremental_initialize(state);
+        //@ assert 0 <= state->p <= dstlen;
         return rv;
     }
 
@@ -234,26 +280,59 @@ int cobs_decode_incremental(struct cobs_decode_state *state, char *dst, size_t d
     state->c--;
 
     if (state->c == 0) {
-        state->c = (unsigned char)src;
+        state->c = src;
         val = 0;
     } else {
         val = src;
     }
 
     size_t pos = state->p-1;
-    if (pos >= dstlen)
-        return -2; /* output buffer too small */
+    if (pos >= dstlen) {
+        cobs_decode_incremental_initialize(state);
+        //@ assert 0 <= state->p <= dstlen+1;
+        return -4; /* output buffer too small */
+    }
     dst[pos] = val;
+    //@ assert 0 <= state->p <= dstlen;
     state->p++;
-    return 0;
-
-errout:
-    cobs_decode_incremental_initialize(state);
+    //@ assert 0 <= state->p <= dstlen+1;
     return -1;
+}
 
-empty_errout:
-    cobs_decode_incremental_initialize(state);
-    return -3;
+/*@ requires \valid_read(buf + (0..len-1));
+    assigns \nothing;
+  @*/
+void handle_packet(unsigned char *buf, size_t len);
+
+/*@ requires \valid(dst + (0..dstlen-1));
+    requires \valid_read(src + (0..srclen-1));
+    requires 0 < dstlen <= 65535;
+    assigns dst[0..dstlen-1];
+  @*/
+void cobs_decode_test(unsigned char *src, size_t srclen, unsigned char *dst, size_t dstlen) {
+    struct cobs_decode_state state;
+    cobs_decode_incremental_initialize(&state);
+    //@ assert state.p == 0;
+    //@ assert state.c == 0;
+    //@ assert state.p != 0 ==> 1 <= state.c <= 255;
+    /*@ loop invariant \separated(&state, dst + (0..dstlen-1), &i);
+        loop invariant \valid(&state);
+        loop invariant \valid(dst + (0..dstlen-1));
+        loop invariant 0 < dstlen <= 65535;
+        loop invariant 0 <= state.p <= dstlen+1;
+        loop invariant state.p != 0 ==> 1 <= state.c <= 255;
+        loop assigns dst[0..dstlen-1], state, i;
+        loop variant srclen-i;
+      @*/
+    for (size_t i=0; i<srclen; i++) {
+        int rv = cobs_decode_incremental(&state, dst, dstlen, src[i]);
+        if (rv >= 0)
+            handle_packet(dst, rv);
+        if (rv == -1)
+            continue;
+        if (rv < -1)
+            continue;
+    }
 }
 
 #ifdef VALIDATION

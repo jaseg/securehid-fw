@@ -17,7 +17,11 @@ ssize_t cobs_decode(char *dst, size_t dstlen, char *src, size_t srclen);
 
 int cobs_encode_incremental(void *f, int (*output)(void *, char), char *src, size_t srclen);
 
+/*@ requires \valid(state);
+    ensures state->p == 0 && state->c == 0;
+    assigns *state;
+  @*/
 void cobs_decode_incremental_initialize(struct cobs_decode_state *state);
-int cobs_decode_incremental(struct cobs_decode_state *state, char *dst, size_t dstlen, char src);
+int cobs_decode_incremental(struct cobs_decode_state *state, unsigned char *dst, size_t dstlen, unsigned char src);
 
 #endif//__COBS_H__

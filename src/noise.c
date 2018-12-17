@@ -199,8 +199,6 @@ void uninit_handshake(struct NoiseState *st, enum handshake_state new_state) {
 
     requires \separated(&usart2_out, st, buf, st->handshake, &st->handshake_hash);
 
-    assigns key_checked_trace;
-
     ensures (st->handshake_state == HANDSHAKE_DONE_KNOWN_HOST) ==> key_checked_trace == 1;
     ensures (st->handshake_state != HANDSHAKE_IN_PROGRESS) ==>
         key_match_trace == 1 || (st->failed_handshakes > \old(st->failed_handshakes));
