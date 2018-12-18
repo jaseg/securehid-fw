@@ -18,8 +18,8 @@ extern volatile int host_packet_length;
 
 enum handshake_state {
     HANDSHAKE_UNINITIALIZED,
-    HANDSHAKE_NOT_STARTED,
-    HANDSHAKE_IN_PROGRESS,
+    HANDSHAKE_PHASE1,
+    HANDSHAKE_PHASE2,
     HANDSHAKE_DONE_UNKNOWN_HOST,
     HANDSHAKE_DONE_KNOWN_HOST,
 };
