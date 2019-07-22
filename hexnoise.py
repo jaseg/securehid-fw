@@ -119,82 +119,89 @@ class KeyMapper:
     def map_regulars(kls, keycodes):
         return [ kls.REGULAR_MAP[kc] for kc in keycodes if kc != 0 and kc in kls.REGULAR_MAP ]
 
+class MouseMapper:
+    BUTTONS = [ uinput.ev.BTN_LEFT, uinput.ev.BTN_RIGHT, uinput.ev.BTN_MIDDLE ]
+    ALL_EVENTS = BUTTONS + [ uinput.ev.REL_X, uinput.ev.REL_Y, uinput.ev.REL_WHEEL ]
+
+    @classmethod
+    def map_buttons(kls, val):
+        return { mod for i, mod in enumerate(kls.BUTTONS) if val & (1<<i) }
+
 class Magic:
     @classmethod
     def map_bytes_to_incantation(kls, data):
-        elems = [ f'{kls.ADJECTIVES[a]} {kls.NOUNS[b]}' for a, b in zip(data[0::2], data[1::2]) ]
-        nfirst = ", ".join(elems[:-1])
-        return f'{nfirst} and {elems[-1]}'
+        elems = [ f'{kls.EVEN[a]} {kls.ODD[b]}' for a, b in zip(data[0::2], data[1::2]) ]
+        return ", ".join(elems)
 
-    ADJECTIVES = '''
-        wrathful      worthy         weird             warm             volatile     veiled      vacuous       useless
-        upset         unsoiled       unsightly         unpronounceable  unfriendly   unfree      unfit         unfaithful
-        unchaste      unbroken       unbound           unblessed        unbefitting  unaltered   unabused      unable
-        ugly          tongued        thorny            thirsty          thick        terminal    ten-sided     teeming
-        tangerine     taken          substantial       stupefying       stringy      strange     stillborn     sticky
-        stagnant      spongy         sour              soul-destroying  smoldering   smitten     slain         six-sided
-        shifting      shadowy        severed           seven-sided      serene       salty       rust-red      royal
-        rotten        riddled        resentful         regrettable      reeking      rare        rank          rancid
-        quiescent     putrid         putrid            putrescent       prehistoric  predatory   predaceous    porous
-        poisonous     pierced        phlegmatic        petrifying       pessimal     pathetic    odorless      oddish
-        obsessed      obscene        numb              nine-sided       nasty        mysterious  mute          musky
-        morose        moribund       moldy             miasmic          material     many-lobed  malodorous    malign
-        maimed        luminescent    low-cut           lousy            live         limp        lifeless      leering
-        leaky         layered        latent            lackluster       jagged       irregular   iridescent    intangible
-        infinite      inept          incomprehensible  in-between       improper     idle        hunted        hideous
-        heavy         hairy          guilty            grotesque        grey         greedy      gory          gorgeous
-        gooey         golden-brown   golden            ghastly          frostbitten  fresh-cut   freakish      frantic
-        fossilized    formless       formidable        floccose         five-lobed   firstborn   filthy        fickle
-        fetid         fertile        fearful           fatal            familiar     fallen      fallacious    faint
-        faceless      extinct        esoteric          errant           emergent     elastic     eight-sided   eerie
-        ebon          dysphoric      dying             dumb             dull-purple  dull        dull          dull
-        dormant       doomed         disfigured        dirty            defenseless  deep-pink   deep          deconsecrated
-        deathlike     deadly         dead              dark-blue        dark         curly       curious       cured
-        cunning       crystalline    cryptic           crying           crumbly      crimson     crested       creepy
-        crazy         corrupt        corporeal         contemptible     contained    concrete    cloudy        chopped
-        chained       caustic        catholic          cathartic        captive      cancerous   cabalistic    burnt
-        buoyant       bronze-red     bronze            broken           bright-red   breathless  bound         bound
-        bottomless    bony           bodiless          blue-lilac       blue         bloody      bloodthirsty  bloodsucking
-        bloodstained  bloodcurdling  blonde            blistered        blank        bitter      bilgy         bewitched
-        befouled      beardless      bastardly         barbed           baleful      balding     awkward       awful
-        atrocious     arcane         appalling         antic            anonymous    angry       ample         ambiguous
-        amber-green   amber          aghast            activated        acidic       abused      abstruse      abject
-        '''.split()
+    EVEN = '''
+        aardvark   absurd     accrue     acme       adrift     adult      afflict    ahead
+        aimless    Algol      allow      alone      ammo       ancient    apple      artist
+        assume     Athens     atlas      Aztec      baboon     backfield  backward   banjo
+        beaming    bedlamp    beehive    beeswax    befriend   Belfast    berserk    billiard
+        bison      blackjack  blockade   blowtorch  bluebird   bombast    bookshelf  brackish
+        breadline  breakup    brickyard  briefcase  Burbank    button     buzzard    cement
+        chairlift  chatter    checkup    chisel     choking    chopper    Christmas  clamshell
+        classic    classroom  cleanup    clockwork  cobra      commence   concert    cowbell
+        crackdown  cranky     crowfoot   crucial    crumpled   crusade    cubic      dashboard
+        deadbolt   deckhand   dogsled    dragnet    drainage   dreadful   drifter    dropper
+        drumbeat   drunken    Dupont     dwelling   eating     edict      egghead    eightball
+        endorse    endow      enlist     erase      escape     exceed     eyeglass   eyetooth
+        facial     fallout    flagpole   flatfoot   flytrap    fracture   framework  freedom
+        frighten   gazelle    Geiger     glitter    glucose    goggles    goldfish   gremlin
+        guidance   hamlet     highchair  hockey     indoors    indulge    inverse    involve
+        island     jawbone    keyboard   kickoff    kiwi       klaxon     locale     lockup
+        merit      minnow     miser      Mohawk     mural      music      necklace   Neptune
+        newborn    nightbird  Oakland    obtuse     offload    optic      orca       payday
+        peachy     pheasant   physique   playhouse  Pluto      preclude   prefer     preshrunk
+        printer    prowler    pupil      puppy      python     quadrant   quiver     quota
+        ragtime    ratchet    rebirth    reform     regain     reindeer   rematch    repay
+        retouch    revenge    reward     rhythm     ribcage    ringbolt   robust     rocker
+        ruffled    sailboat   sawdust    scallion   scenic     scorecard  Scotland   seabird
+        select     sentence   shadow     shamrock   showgirl   skullcap   skydive    slingshot
+        slowdown   snapline   snapshot   snowcap    snowslide  solo       southward  soybean
+        spaniel    spearhead  spellbind  spheroid   spigot     spindle    spyglass   stagehand
+        stagnate   stairway   standard   stapler    steamship  sterling   stockman   stopwatch
+        stormy     sugar      surmount   suspense   sweatband  swelter    tactics    talon
+        tapeworm   tempest    tiger      tissue     tonic      topmost    tracker    transit
+        trauma     treadmill  Trojan     trouble    tumor      tunnel     tycoon     uncut
+        unearth    unwind     uproot     upset      upshot     vapor      village    virus
+        Vulcan     waffle     wallet     watchword  wayside    willow     woodlark   Zulu
+    '''.split()
 
-    NOUNS = '''
-        yolk         writing        wrath      wound          worm              wings         whistle       watchdog
-        waste        vomit          vermin     variation      underachievement  tusk          troll         trick
-        transplant   transgression  tooth      tongue         tickle            tick          thorn         thistle
-        thing        terror         tentacle   tease          surrender         surge         sucker        substance
-        storm        stone          stew       stalk          squid             sprout        sponge        spill
-        spider       sphere         spectacle  speck          spawn             soul          solution      snout
-        snake        smell          sloth      slime          slice             sleeper       slave         sinew
-        shell        shape          seizure    seed           schism            scam          scale         sainthood
-        root         robe           roach      rinse          remains           relay         rejuvenation  realization
-        reaction     ransom         pupa       pride          prey              predator      potion        pornography
-        polyp        plum           pleasure   pitch          pigeon            phenomenon    pest          periwinkle
-        percolation  parasite       pair       oyster         orphan            orgasm        organism      orchid
-        object       nail           mushroom   murder         mucus             movement      mother        mold
-        mist         mildew         metal      mesh           meddling          mayhem        masterpiece   masonry
-        mask         manhood        maggot     lust           loop              living_thing  liquor        liquid
-        lining       laceration     knife      kitten         kiss              jumper        jest          instrument
-        injustice    injury         influence  indulgence     incursion         impulse       imago         hound
-        horn         hook           hoof       heirloom       heart             hawk          hare          hair
-        gulp         guardian       grass      goat           gnat              gluttony      glowworm      gasp
-        game         fusion         fungus     frustration    frog              foul          foot          food
-        fog          foal           fluke      fluff          flower            flicker       flea          flattery
-        flask        flare          firefly    finger         filtration        female        feeder        feather
-        fart         fang           failure    face           fabrication       extract       exodus        evil
-        envy         enema          embryo     egress         echo              eater         ear           dwarf
-        dust         drop           draft      domestication  distortion        dew           depravity     deity
-        death        daughter       dash       dagger         culture           crutch        crow          critter
-        creeper      creation       crab       corruption     cocoon            claw          chip          child
-        cell         catch          carving    carrot         carnival          cancer        butterfly     burn
-        buildup      brush          brew       bottle         boot              book          bone          blunder
-        blot         blood          blink      bite           bird              benthos       beak          basket
-        bark         ball           baby       axolotl        ashes             artifact      arson         armor
-        apparition   antenna        alms       alienation     advent            adornment     abomination   abandonment
-        '''.split()
+    ODD = '''
+        adroitness   adviser     aftermath    aggregate   alkali       almighty     amulet       amusement
+        antenna      applicant   Apollo       armistice   article      asteroid     Atlantic     atmosphere
+        autopsy      Babylon     backwater    barbecue    belowground  bifocals     bodyguard    bookseller
+        borderline   bottomless  Bradbury     bravado     Brazilian    breakaway    Burlington   businessman
+        butterfat    Camelot     candidate    cannonball  Capricorn    caravan      caretaker    celebrate
+        cellulose    certify     chambermaid  Cherokee    Chicago      clergyman    coherence    combustion
+        commando     company     component    concurrent  confidence   conformist   congregate   consensus
+        consulting   corporate   corrosion    councilman  crossover    crucifix     cumbersome   customer
+        Dakota       decadence   December     decimal     designing    detector     detergent    determine
+        dictator     dinosaur    direction    disable     disbelief    disruptive   distortion   document
+        embezzle     enchanting  enrollment   enterprise  equation     equipment    escapade     Eskimo
+        everyday     examine     existence    exodus      fascinate    filament     finicky      forever
+        fortitude    frequency   gadgetry     Galveston   getaway      glossary     gossamer     graduate
+        gravity      guitarist   hamburger    Hamilton    handiwork    hazardous    headwaters   hemisphere
+        hesitate     hideaway    holiness     hurricane   hydraulic    impartial    impetus      inception
+        indigo       inertia     infancy      inferno     informant    insincere    insurgent    integrate
+        intention    inventive   Istanbul     Jamaica     Jupiter      leprosy      letterhead   liberty
+        maritime     matchmaker  maverick     Medusa      megaton      microscope   microwave    midsummer
+        millionaire  miracle     misnomer     molasses    molecule     Montana      monument     mosquito
+        narrative    nebula      newsletter   Norwegian   October      Ohio         onlooker     opulent
+        Orlando      outfielder  Pacific      pandemic    Pandora      paperweight  paragon      paragraph
+        paramount    passenger   pedigree     Pegasus     penetrate    perceptive   performance  pharmacy
+        phonetic     photograph  pioneer      pocketful   politeness   positive     potato       processor
+        provincial   proximate   puberty      publisher   pyramid      quantity     racketeer    rebellion
+        recipe       recover     repellent    replica     reproduce    resistor     responsive   retraction
+        retrieval    retrospect  revenue      revival     revolver     sandalwood   sardonic     Saturday
+        savagery     scavenger   sensation    sociable    souvenir     specialist   speculate    stethoscope
+        stupendous   supportive  surrender    suspicious  sympathy     tambourine   telephone    therapist
+        tobacco      tolerance   tomorrow     torpedo     tradition    travesty     trombonist   truncated
+        typewriter   ultimate    undaunted    underfoot   unicorn      unify        universe     unravel
+        upcoming     vacancy     vagabond     vertigo     Virginia     visitor      vocalist     voyager
+        warranty     Waterloo    whimsical    Wichita     Wilmington   Wyoming      yesteryear   Yucatan
+    '''.split()
 
 class NoiseEngine:
     def __init__(self, host_key, packetizer, debug=False):
@@ -331,16 +338,17 @@ class NoiseEngine:
                 raise ProtocolError('Invalid report type')
 
     def uinput_passthrough(self):
-        with uinput.Device(KeyMapper.ALL_KEYS) as ui:
-            old_kcs = set()
+        with uinput.Device(KeyMapper.ALL_KEYS + MouseMapper.ALL_EVENTS) as ui:
+            old_kcs, old_buttons = set(), set()
             for msg_type, payload in self.receive_loop():
                 report_len, *report = payload
-                if report_len != 8:
+                if report_len < 3 or report_len > 8:
                     raise ValueError('Unsupported report length', report_len)
+                if self.debug:
+                    print(msg_type, payload)
 
                 if msg_type is ReportType.KEYBOARD:
                     modbyte, _reserved, *keycodes = report
-                    import binascii
                     keys = { *KeyMapper.map_modifiers(modbyte), *KeyMapper.map_regulars(keycodes) }
                     if self.debug:
                         print('Emitting:', keys)
@@ -353,8 +361,31 @@ class NoiseEngine:
                     old_kcs = keys
 
                 elif msg_type is ReportType.MOUSE:
-                    # FIXME unhandled
-                    pass
+                    _foo, button_byte, pos1, pos2, pos3, wheel_rel, *_unhandled = *report, 0
+                    wheel_rel = wheel_rel if wheel_rel<128 else wheel_rel-256
+                    x_rel = ((pos2&0xf)<<8) | pos1
+                    y_rel = (pos3<<4) | (pos2>>4)
+                    x_rel = x_rel if x_rel<2048 else x_rel-4096
+                    y_rel = y_rel if y_rel<2048 else y_rel-4096
+
+                    buttons = MouseMapper.map_buttons(button_byte)
+                    if self.debug:
+                        print('Emitting:', buttons, x_rel, y_rel, wheel_rel)
+
+                    for button in buttons - old_buttons:
+                        ui.emit(button, 1, syn=False)
+                    for button in old_buttons - buttons:
+                        ui.emit(button, 0, syn=False)
+
+                    if x_rel:
+                        ui.emit(uinput.ev.REL_X, x_rel, syn=False)
+                    if y_rel:
+                        ui.emit(uinput.ev.REL_Y, y_rel, syn=False)
+                    if wheel_rel:
+                        ui.emit(uinput.ev.REL_WHEEL, wheel_rel, syn=False)
+                    ui.syn()
+                    old_buttons = buttons
+
 
 if __name__ == '__main__':
     import argparse
@@ -368,7 +399,16 @@ if __name__ == '__main__':
 
     ser = serial.Serial(args.serial, args.baudrate)
     packetizer = Packetizer(ser, debug=args.debug, width=args.width)
-    noise = NoiseEngine(packetizer, debug=args.debug)
+
+    private_key_file = os.path.join(XDG_CONFIG_HOME, 'host_key.pem')
+    if not os.path.isfile(private_key_file):
+        with open(private_key_file, 'w') as f:
+            f.write(binascii.hexlify(hexnoise.NoiseEngine.generate_private_key_x25519()).decode())
+
+    with open(private_key_file) as f:
+        host_key_private = binascii.unhexlify(f.read())
+
+    noise = NoiseEngine(host_key_private, packetizer, debug=args.debug)
     noise.perform_handshake()
 
     print('Handshake channel binding incantation:')
